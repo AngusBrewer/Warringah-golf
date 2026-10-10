@@ -27,6 +27,9 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 .clubs button{flex:none;min-width:52px;padding:9px 10px;border-radius:10px;font-family:var(--display);font-size:18px;font-weight:700}
 .clubs button[aria-pressed="true"]{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway)}
 .clubname{font-size:14px;color:var(--muted);margin-top:-2px}
+.aimrow{display:grid;grid-template-columns:1fr auto 1fr;gap:8px}
+.aimrow button{padding:12px 10px;font-size:17px;font-weight:600;touch-action:none}
+.aimrow button.on{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway)}
 .pad{flex:1;border-radius:22px;border:2px solid var(--fairway);background:var(--fairway-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;touch-action:none;text-align:center;transition:background .12s,transform .12s;min-height:220px}
 .pad .big{font-family:var(--display);font-size:40px;font-weight:700;line-height:1;color:var(--fairway)}
 .pad .small{color:var(--muted);font-size:15px;max-width:26ch}
@@ -58,6 +61,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
   <div id="playView" hidden style="display:contents">
     <div class="clubs" id="clubs" role="group" aria-label="Choose a club"></div>
     <div class="clubname" id="clubName"></div>
+    <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
     <section class="pad" id="pad" aria-label="Hold to swing">
       <div class="big" id="padBig">Hold here</div>
       <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
@@ -74,7 +78,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 5;
+const VERSION = 6;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -115,17 +119,27 @@ function link(){
   if (!hostId || typeof Peer === 'undefined') return;
   chip('Linking…');
   peer = new Peer({debug: 1});
-  peer.on('open', () => {
-    conn = peer.connect(hostId, {serialization: 'json'});
-    conn.on('open', () => { chip('Linked', 'ok'); hello(); });
-    conn.on('data', m => { if (m && m.t === 'ping') send({t:'pong', at: m.at}); });
-    conn.on('close', () => { chip('Not linked', 'bad'); setMsg('Lost the screen. Reload the page on the Mac, then scan again.'); });
-  });
+  peer.on('open', connectNow);
   peer.on('error', e => {
-    if (e.type === 'peer-unavailable'){ chip('Not linked', 'bad'); setMsg("Couldn't find the screen. Reload the Swing Lab on your Mac and scan the new code."); }
+    if (e.type === 'peer-unavailable'){ chip('Looking…'); setMsg('Looking for the screen. Keep the game or Swing Lab open on your Mac.'); clearTimeout(retryT); retryT = setTimeout(connectNow, 2500); }
     else if (['network','server-error','socket-error'].includes(e.type) && !(conn && conn.open)){ chip('Not linked', 'bad'); setMsg('No internet connection to the matchmaking server.'); }
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch {} });
+}
+// Reconnects by itself, so switching between the Swing Lab and the game on the Mac keeps the phone linked.
+let retryT = 0;
+function connectNow(){
+  if (!peer || peer.destroyed || (conn && conn.open)) return;
+  const c = peer.connect(hostId, {serialization: 'json'}); conn = c;
+  c.on('open', () => { chip('Linked', 'ok'); hello(); });
+  c.on('data', onScreen);
+  c.on('close', () => { if (c !== conn) return; chip('Reconnecting…'); clearTimeout(retryT); retryT = setTimeout(connectNow, 1500); });
+}
+function onScreen(m){
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'ping') send({t:'pong', at: m.at});
+  else if (m.t === 'club' && CLUBS.some(c => c[0] === m.club) && !calibrating && m.club !== club){ club = m.club; store.set('wgolf-club', club); renderClubs(); }
+  else if (m.t === 'state' && typeof m.text === 'string') setMsg(m.text.slice(0, 120));
 }
 
 // ---------- clubs ----------
@@ -268,6 +282,16 @@ function shoot(p){
   $('#padBig').textContent = over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft';
   setTimeout(() => { $('#padBig').textContent = holding ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here'; }, 1400);
 }
+
+// ---------- aim buttons ----------
+function aimBtn(el, d){
+  const on = e => { e.preventDefault(); el.classList.add('on'); try { el.setPointerCapture(e.pointerId); } catch {} send({t:'aim', d, on: true}); };
+  const off = () => { if (!el.classList.contains('on')) return; el.classList.remove('on'); send({t:'aim', d, on: false}); };
+  el.addEventListener('pointerdown', on); ['pointerup','pointercancel','lostpointercapture'].forEach(ev => el.addEventListener(ev, off));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+aimBtn($('#aimL'), -1); aimBtn($('#aimR'), 1);
+$('#mapB').onclick = () => send({t:'view'});
 
 // ---------- hold pad ----------
 const pad = $('#pad'); const pointers = new Set();
