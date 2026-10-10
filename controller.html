@@ -12,27 +12,36 @@
 <style>
 html,body{height:100%}
 body{display:flex;flex-direction:column;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-.top{padding:calc(14px + env(safe-area-inset-top,0px)) 16px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.top{padding:calc(12px + env(safe-area-inset-top,0px)) 16px 6px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 .top h1{font-size:24px}
 .chip{font-size:13px;font-weight:600;border-radius:999px;padding:4px 12px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .chip.ok{background:var(--fairway-soft);color:var(--fairway);border-color:transparent}
 .chip.bad{background:var(--flag-soft);color:var(--flag);border-color:transparent}
-.msg{padding:0 16px 10px;color:var(--muted);font-size:15px;min-height:1.5em}
-main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(16px + env(safe-area-inset-bottom,0px));gap:12px;min-height:0}
+.msg{padding:0 16px 8px;color:var(--muted);font-size:15px;min-height:1.5em}
+main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(safe-area-inset-bottom,0px));gap:10px;min-height:0}
 .start{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px}
 .start button{font-size:20px;padding:18px;border-radius:16px}
 .start p{margin:0;color:var(--muted)}
-.pad{flex:1;border-radius:22px;border:2px solid var(--fairway);background:var(--fairway-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;touch-action:none;text-align:center;transition:background .12s,transform .12s;min-height:260px}
+.clubs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.clubs::-webkit-scrollbar{display:none}
+.clubs button{flex:none;min-width:52px;padding:9px 10px;border-radius:10px;font-family:var(--display);font-size:18px;font-weight:700}
+.clubs button[aria-pressed="true"]{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway)}
+.clubname{font-size:14px;color:var(--muted);margin-top:-2px}
+.pad{flex:1;border-radius:22px;border:2px solid var(--fairway);background:var(--fairway-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;touch-action:none;text-align:center;transition:background .12s,transform .12s;min-height:220px}
 .pad .big{font-family:var(--display);font-size:40px;font-weight:700;line-height:1;color:var(--fairway)}
 .pad .small{color:var(--muted);font-size:15px;max-width:26ch}
 .pad.held{background:var(--fairway);transform:scale(.985)}
 .pad.held .big,.pad.held .small{color:var(--fairway-ink)}
-.result{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-variant-numeric:tabular-nums}
-.result .num{font-size:40px;font-weight:700;line-height:1}
-.result .num small{font-size:18px;color:var(--muted);margin-left:2px}
-.bar{height:10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
-.bar i{display:block;height:100%;width:0;background:var(--fairway);transition:width .3s ease}
-.live{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pad.cal{border-color:var(--amber);background:var(--amber-soft)}
+.pad.cal .big{color:var(--amber)}
+.pad.cal.held{background:var(--amber)}
+.pad.cal.held .big,.pad.cal.held .small{color:var(--bg)}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.result{font-variant-numeric:tabular-nums}
+.result .num{font-size:32px;font-weight:700;line-height:1}
+.result .num small{font-size:16px;color:var(--muted);margin-left:2px}
+.result .tag{font-size:13px;color:var(--muted)}
+.live{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -46,15 +55,19 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(16px + env(sa
     <button class="primary" id="startBtn">Start</button>
     <p>Your phone will ask to use motion. Tap <b>Allow</b>. Keep this page open while you play.</p>
   </section>
-  <section class="pad" id="pad" hidden aria-label="Hold to swing">
-    <div class="big" id="padBig">Hold here</div>
-    <div class="small" id="padSmall">Keep your thumb on the pad and swing like a golf shot.</div>
-  </section>
-  <section id="resultView" hidden>
-    <div class="result"><span class="muted">Last swing</span><span class="num" id="pw">–</span></div>
-    <div class="bar"><i id="bar"></i></div>
-  </section>
-  <div class="live" id="live"></div>
+  <div id="playView" hidden style="display:contents">
+    <div class="clubs" id="clubs" role="group" aria-label="Choose a club"></div>
+    <div class="clubname" id="clubName"></div>
+    <section class="pad" id="pad" aria-label="Hold to swing">
+      <div class="big" id="padBig">Hold here</div>
+      <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
+    </section>
+    <div class="foot">
+      <div class="result"><div class="tag" id="lastTag">Last swing</div><div class="num" id="pw">–</div></div>
+      <button id="calBtn">Set full swing</button>
+    </div>
+    <div class="live" id="live"></div>
+  </div>
 </main>
 <div class="toast" id="toast"></div>
 
@@ -66,33 +79,95 @@ const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
 const setMsg = t => { $('#msg').textContent = t; };
 const chip = (t, k) => { const c = $('#chip'); c.textContent = t; c.className = 'chip' + (k ? ' ' + k : ''); };
+function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
 
-setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still test swings here.');
+const CLUBS = [['Dr','Driver'],['3W','3 wood'],['5i','5 iron'],['7i','7 iron'],['9i','9 iron'],['PW','Pitching wedge'],['SW','Sand wedge'],['Pt','Putter']];
+// Detection settings. Full swings: hands rotate hundreds of °/s. Putts: a few dozen.
+const MODES = {
+  full: {start: 300, end: 150, endHold: 80, minPeak: 450, floor: 350, wait: 500},
+  putt: {start: 40, end: 20, endHold: 120, minPeak: 60, floor: 30, wait: 300}
+};
+let club = store.get('wgolf-club', 'Dr');
+let full = store.get('wgolf-full', null);       // °/s of your 100% swing, set by calibration
+let puttFull = store.get('wgolf-puttfull', null);
+const FULL_DEFAULT = 1100, PUTT_DEFAULT = 300;  // from your first test session
+let calibrating = null;                          // {mode, peaks: []}
+const mode = () => club === 'Pt' ? 'putt' : 'full';
+
+setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still practise here.');
 if (!window.isSecureContext) setMsg('Open this page from its https:// address, or motion will be blocked.');
 
 // ---------- link ----------
 let peer = null, conn = null, motionStatus = 'pending';
 function send(m){ if (conn && conn.open) { try { conn.send(m); } catch {} } }
+function hello(){
+  send({t:'status', motion: motionStatus, device});
+  send({t:'club', club});
+  send({t:'cal', full: full || FULL_DEFAULT, puttFull: puttFull || PUTT_DEFAULT, set: {full: !!full, putt: !!puttFull}});
+}
 function link(){
   if (!hostId || typeof Peer === 'undefined') return;
   chip('Linking…');
   peer = new Peer({debug: 1});
   peer.on('open', () => {
     conn = peer.connect(hostId, {serialization: 'json'});
-    conn.on('open', () => { chip('Linked', 'ok'); send({t:'status', motion: motionStatus, device}); });
+    conn.on('open', () => { chip('Linked', 'ok'); hello(); });
     conn.on('data', m => { if (m && m.t === 'ping') send({t:'pong', at: m.at}); });
     conn.on('close', () => { chip('Not linked', 'bad'); setMsg('Lost the screen. Reload the page on the Mac, then scan again.'); });
   });
   peer.on('error', e => {
-    if (e.type === 'peer-unavailable'){ chip('Not linked', 'bad'); setMsg("Couldn't find the screen. Reload the Swing Test page on your Mac and scan the new code."); }
-    else if (['network','server-error','socket-error'].includes(e.type)){ chip('Not linked', 'bad'); setMsg('No internet connection to the matchmaking server.'); }
+    if (e.type === 'peer-unavailable'){ chip('Not linked', 'bad'); setMsg("Couldn't find the screen. Reload the Swing Lab on your Mac and scan the new code."); }
+    else if (['network','server-error','socket-error'].includes(e.type) && !(conn && conn.open)){ chip('Not linked', 'bad'); setMsg('No internet connection to the matchmaking server.'); }
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch {} });
 }
 
+// ---------- clubs ----------
+function renderClubs(){
+  $('#clubs').innerHTML = CLUBS.map(([k]) => `<button data-club="${k}" aria-pressed="${k === club}">${k}</button>`).join('');
+  $('#clubName').textContent = CLUBS.find(c => c[0] === club)[1] + (club === 'Pt' ? ' · soft stroke, like a real putt' : '');
+  $('#calBtn').textContent = club === 'Pt' ? 'Set full putt' : 'Set full swing';
+  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Keep your thumb on the pad and swing.';
+  $('#pad').classList.toggle('cal', !!calibrating);
+}
+$('#clubs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-club]'); if (!b || calibrating) return;
+  club = b.dataset.club; store.set('wgolf-club', club); renderClubs(); send({t:'club', club});
+  b.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+});
+
+// ---------- calibration ----------
+function calText(){ return calibrating.mode === 'putt'
+  ? `Make your longest comfortable putting stroke. ${calibrating.peaks.length + 1} of 3.`
+  : `Take a full, comfortable swing. ${calibrating.peaks.length + 1} of 3.`; }
+$('#calBtn').onclick = () => {
+  if (calibrating){ calibrating = null; renderClubs(); setMsg('Setup cancelled.'); send({t:'cal', cancelled: true}); return; }
+  calibrating = {mode: mode(), peaks: []};
+  $('#calBtn').textContent = 'Cancel';
+  setMsg(calibrating.mode === 'putt' ? 'Setting your full putt. These 3 strokes set 100% for the putter.' : 'Setting your full swing. These 3 swings set 100% power.');
+  send({t:'cal', step: 0, of: 3, mode: calibrating.mode});
+  renderClubs(); $('#calBtn').textContent = 'Cancel';
+};
+function calSwing(peak){
+  calibrating.peaks.push(peak);
+  const n = calibrating.peaks.length;
+  send({t:'cal', step: n, of: 3, mode: calibrating.mode, peak: Math.round(peak)});
+  if (n < 3){ renderClubs(); $('#calBtn').textContent = 'Cancel'; return; }
+  const med = [...calibrating.peaks].sort((a,b) => a-b)[1];
+  if (calibrating.mode === 'putt'){ puttFull = Math.round(med); store.set('wgolf-puttfull', puttFull); }
+  else { full = Math.round(med); store.set('wgolf-full', full); }
+  setMsg(calibrating.mode === 'putt' ? `Full putt set: ${puttFull} °/s.` : `Full swing set: ${full} °/s. A swing like that is 100% power.`);
+  toast('Saved');
+  calibrating = null; renderClubs(); hello();
+}
+
 // ---------- motion ----------
 let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
-let holding = false, active = false, peak = 0, face = 0, t0 = 0, lowSince = 0, coolUntil = 0;
+let holding = false, active = false, peak = 0, faceAcc = 0, faceAtPeak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
 
 $('#startBtn').onclick = async () => {
   $('#startBtn').disabled = true;
@@ -106,10 +181,9 @@ $('#startBtn').onclick = async () => {
     $('#startBtn').disabled = false; return;
   }
   window.addEventListener('devicemotion', onMotion);
-  try { await navigator.wakeLock?.request('screen'); } catch {}
-  $('#startView').hidden = true; $('#pad').hidden = false; $('#resultView').hidden = false;
-  setMsg('Waiting for motion…');
-  link();
+  navigator.wakeLock?.request('screen').catch(() => {});
+  $('#startView').hidden = true; $('#playView').hidden = false;
+  renderClubs(); setMsg('Waiting for motion…'); link();
   setTimeout(() => {
     if (!gotMotion){ motionStatus = 'none'; send({t:'status', motion:'none', device}); setMsg("This browser isn't giving motion data. Try Safari on iPhone or Chrome on Android."); }
   }, 2000);
@@ -121,54 +195,61 @@ function onMotion(e){
   const now = performance.now(), dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
   const a = rr.alpha || 0, b = rr.beta || 0, g = rr.gamma || 0;
   rot = Math.hypot(a, b, g);
-  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device}); setMsg(hostId ? 'Hold the green pad and swing.' : 'Hold the green pad and swing. (Not linked to a screen.)'); }
+  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device}); setMsg(hostId ? 'Pick a club, hold the pad and swing.' : 'Hold the pad and swing. (Not linked to a screen.)'); }
 
-  // swing detection: only while the pad is held
-  if (!active && holding && now > coolUntil && rot > 300){ active = true; peak = rot; face = 0; t0 = now; lowSince = 0; }
+  // Face: how far the phone has rolled around its long side since you pressed the pad (address).
+  if (holding) faceAcc += g * dt;
+
+  const M = MODES[mode()];
+  if (!active && holding && now > coolUntil && rot > M.start){ active = true; peak = rot; faceAtPeak = faceAcc; t0 = now; lowSince = 0; }
   if (active){
-    peak = Math.max(peak, rot); face += g * dt;
-    if (rot < 150){ if (!lowSince) lowSince = now; } else lowSince = 0;
-    if ((lowSince && now - lowSince > 80 && now - t0 > 120) || now - t0 > 2000) finish(now);
+    if (rot > peak){ peak = rot; faceAtPeak = faceAcc; }
+    if (rot < M.end){ if (!lowSince) lowSince = now; } else lowSince = 0;
+    if ((lowSince && now - lowSince > M.endHold && now - t0 > 120) || now - t0 > 2500) finish(now);
   }
   if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding}); }
   $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''}`;
 }
 
-// A swing is a backswing burst, a pause at the top, then the faster downswing.
-// Each burst ends at a pause; we hold the best one for a moment so the downswing
-// can replace the backswing, then send whichever was fastest.
+// A swing is a backswing, a pause at the top, then the faster downswing. Each burst
+// ends at a pause; hold the fastest one briefly so the downswing can replace the backswing.
 let pending = null, pendingTimer = 0;
 function finish(now){
   active = false;
-  if (peak >= 450 && (!pending || peak > pending.peak)) pending = {peak, face, dur: now - t0};
-  if (!pending) return;              // only wiggles so far: ignore quietly
+  const M = MODES[mode()];
+  if (peak >= M.minPeak && (!pending || peak > pending.peak)) pending = {peak, face: faceAtPeak, dur: now - t0, mode: mode()};
+  if (!pending) return;
   clearTimeout(pendingTimer);
-  pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, 500);
+  pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, M.wait);
 }
 function shoot(p){
   coolUntil = performance.now() + 600;
-  const power = Math.max(0.03, Math.min(1, (p.peak - 450) / (1700 - 450)));
-  const shot = {t:'swing', power, peak: Math.round(p.peak), face: Math.round(Math.max(-90, Math.min(90, p.face))), dur: Math.round(p.dur)};
-  send(shot);
-  try { navigator.vibrate?.(60); } catch {}
+  try { navigator.vibrate?.(p.mode === 'putt' ? 25 : 60); } catch {}
+  if (calibrating){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), face: Math.round(p.face), dur: Math.round(p.dur)}); calSwing(p.peak); return; }
+  const M = MODES[p.mode], top = p.mode === 'putt' ? (puttFull || PUTT_DEFAULT) : (full || FULL_DEFAULT);
+  const power = Math.max(0.02, Math.min(1, (p.peak - M.floor) / (top - M.floor)));
+  const over = p.mode === 'full' && p.peak > top * 1.15;
+  send({t:'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face))), dur: Math.round(p.dur)});
+  $('#lastTag').textContent = 'Last ' + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');
   $('#pw').innerHTML = Math.round(power * 100) + '<small>%</small>';
-  $('#bar').style.width = Math.round(power * 100) + '%';
-  $('#padBig').textContent = power > 0.92 ? 'Smashed it' : power > 0.6 ? 'Nice swing' : power > 0.3 ? 'Steady' : 'Soft one';
-  setTimeout(() => { $('#padBig').textContent = holding ? 'Swing!' : 'Hold here'; }, 1400);
+  $('#padBig').textContent = over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft';
+  setTimeout(() => { $('#padBig').textContent = holding ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here'; }, 1400);
 }
 
 // ---------- hold pad ----------
 const pad = $('#pad'); const pointers = new Set();
 function setHold(on){
+  if (on === holding) return;
   holding = on; pad.classList.toggle('held', on);
-  $('#padBig').textContent = on ? 'Swing!' : 'Hold here';
+  if (on){ faceAcc = 0; }
+  $('#padBig').textContent = on ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here';
   if (!on && active) finish(performance.now());
   send({t:'m', r: Math.round(rot), h: holding});
 }
 pad.addEventListener('pointerdown', e => { pointers.add(e.pointerId); try { pad.setPointerCapture(e.pointerId); } catch {} setHold(true); e.preventDefault(); });
 ['pointerup','pointercancel','lostpointercapture'].forEach(ev => pad.addEventListener(ev, e => { pointers.delete(e.pointerId); if (!pointers.size) setHold(false); }));
 pad.addEventListener('contextmenu', e => e.preventDefault());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { navigator.wakeLock?.request('screen').catch(() => {}); } else { pointers.clear(); setHold(false); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); else { pointers.clear(); setHold(false); } });
 })();
 </script>
 </body>
