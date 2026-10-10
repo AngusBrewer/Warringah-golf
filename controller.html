@@ -74,6 +74,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
+const VERSION = 5;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -106,7 +107,7 @@ if (!window.isSecureContext) setMsg('Open this page from its https:// address, o
 let peer = null, conn = null, motionStatus = 'pending';
 function send(m){ if (conn && conn.open) { try { conn.send(m); } catch {} } }
 function hello(){
-  send({t:'status', motion: motionStatus, device});
+  send({t:'status', motion: motionStatus, device, v: VERSION});
   send({t:'club', club});
   send({t:'cal', full: full || FULL_DEFAULT, puttFull: puttFull || PUTT_DEFAULT, face0, set: {full: !!full, putt: !!puttFull, face: face0 != null}});
 }
@@ -212,7 +213,7 @@ $('#startBtn').onclick = async () => {
   $('#startView').hidden = true; $('#playView').hidden = false;
   renderClubs(); setMsg('Waiting for motion…'); link();
   setTimeout(() => {
-    if (!gotMotion){ motionStatus = 'none'; send({t:'status', motion:'none', device}); setMsg("This browser isn't giving motion data. Try Safari on iPhone or Chrome on Android."); }
+    if (!gotMotion){ motionStatus = 'none'; send({t:'status', motion:'none', device, v: VERSION}); setMsg("This browser isn't giving motion data. Try Safari on iPhone or Chrome on Android."); }
   }, 2000);
 };
 
@@ -222,7 +223,7 @@ function onMotion(e){
   const now = performance.now(), dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
   const a = rr.alpha || 0, b = rr.beta || 0, g = rr.gamma || 0;
   rot = Math.hypot(a, b, g);
-  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device}); setMsg(hostId ? 'Pick a club, hold the pad and swing.' : 'Hold the pad and swing. (Not linked to a screen.)'); }
+  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device, v: VERSION}); setMsg(hostId ? 'Pick a club, hold the pad and swing.' : 'Hold the pad and swing. (Not linked to a screen.)'); }
 
   const acc = e.accelerationIncludingGravity;
   if (acc && acc.x != null && rot < 120) gLP = [gLP[0]*0.8 + acc.x*0.2, gLP[1]*0.8 + acc.y*0.2, gLP[2]*0.8 + acc.z*0.2];
@@ -240,7 +241,7 @@ function onMotion(e){
     if ((lowSince && now - lowSince > M.endHold && now - t0 > 120) || now - t0 > 2500) finish(now);
   }
   if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding}); }
-  $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''}`;
+  $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''} · version ${VERSION}`;
 }
 
 // A swing is a backswing, a pause at the top, then the faster downswing. Each burst

@@ -70,7 +70,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
   <header>
     <div>
       <h1>Swing Lab</h1>
-      <p class="muted">The driving range. Set up your swing here before we play Warringah.</p>
+      <p class="muted">The driving range. Set up your swing here before we play Warringah. <span id="ver"></span></p>
     </div>
     <div class="hright">
       <span class="chip" id="linkChip">Phone not linked</span>
@@ -157,6 +157,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
 <script>
 (() => {
 const $ = s => document.querySelector(s);
+const VERSION = 5;   // bump on every upload; the phone page must match
 const logEl = $('#log');
 function log(m){ logEl.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`; logEl.scrollTop = logEl.scrollHeight; }
 function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }
@@ -206,7 +207,7 @@ function start(id){
 start(store.get('wgolf-screen-id', null) || ('wgolf-' + rnd(6)));
 
 function showQR(id){
-  const url = new URL('controller.html?v=3', location.href).href.split('#')[0] + '#' + id;
+  const url = new URL('controller.html?v=' + VERSION, location.href).href.split('#')[0] + '#' + id;
   $('#link').textContent = url;
   try { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qr').innerHTML = q.createImgTag(6, 0); }
   catch(e){ $('#qr').innerHTML = '<span class="wait">Code failed. Type the link below on your phone.</span>'; }
@@ -238,6 +239,7 @@ function onData(m){
       $('#dNow').textContent = Math.round([...rtts].sort((a,b) => a-b)[rtts.length >> 1] / 2) + ' ms'; break;
     }
     case 'status':
+      if (Number(m.v) !== VERSION){ chip('Phone page out of date: scan the code again', 'bad'); $('#pairCard').hidden = false; log(`Phone page is version ${Number(m.v) || 'old'}, screen is ${VERSION}.`); }
       if (m.motion === 'denied') toast('Motion was refused on the phone'); log('Phone: ' + String(m.device || '').slice(0,30) + ', motion ' + String(m.motion).slice(0,10)); break;
     case 'club': if (CLUBS[m.club]){ club = m.club; renderAll(); } break;
     case 'cal': {
@@ -385,7 +387,7 @@ function drawGraph(){
 
 // ---------- copy ----------
 $('#copyBtn').onclick = async () => {
-  const lines = ['Swing Lab results', new Date().toString(), navigator.userAgent, '',
+  const lines = ['Swing Lab results (version ' + VERSION + ')', new Date().toString(), navigator.userAgent, '',
     `Full swing: ${calib.full || '?'} °/s (${calib.set.full ? 'set' : 'starter'}), straight reading: ${calib.face0 == null ? 'not set' : calib.face0 + '°'}, full putt: ${calib.puttFull || '?'} °/s (${calib.set.putt ? 'set' : 'starter'}), hook/slice: ${curveMode}${flip ? ', swapped' : ''}`, '', 'Bag:'];
   ORDER.forEach(k => { const l = shots.filter(s => s.club === k); if (!l.length) return;
     const avg = l.reduce((a,s) => a + s.carry, 0) / l.length, miss = l.reduce((a,s) => a + s.side, 0) / l.length;
@@ -398,6 +400,7 @@ $('#copyBtn').onclick = async () => {
   catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied.'); }
 };
 
+$('#ver').textContent = 'Version ' + VERSION + '.';
 renderAll();
 })();
 </script>
