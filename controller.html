@@ -27,7 +27,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 .clubs button{flex:none;min-width:52px;padding:9px 10px;border-radius:10px;font-family:var(--display);font-size:18px;font-weight:700}
 .clubs button[aria-pressed="true"]{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway)}
 .clubname{font-size:14px;color:var(--muted);margin-top:-2px}
-.aimrow{display:grid;grid-template-columns:1fr auto 1fr;gap:8px}
+.aimrow{display:grid;grid-template-columns:1fr auto auto 1fr;gap:6px}
 .aimrow button{padding:12px 10px;font-size:17px;font-weight:600;touch-action:none}
 .aimrow button.on{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway)}
 .pad{flex:1;border-radius:22px;border:2px solid var(--fairway);background:var(--fairway-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;touch-action:none;text-align:center;transition:background .12s,transform .12s;min-height:220px}
@@ -61,7 +61,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
   <div id="playView" hidden style="display:contents">
     <div class="clubs" id="clubs" role="group" aria-label="Choose a club"></div>
     <div class="clubname" id="clubName"></div>
-    <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
+    <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="readB">Read</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
     <section class="pad" id="pad" aria-label="Hold to swing">
       <div class="big" id="padBig">Hold here</div>
       <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
@@ -78,7 +78,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 6;
+const VERSION = 8;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -93,7 +93,9 @@ const store = {
 const CLUBS = [['Dr','Driver'],['3W','3 wood'],['5i','5 iron'],['7i','7 iron'],['9i','9 iron'],['PW','Pitching wedge'],['SW','Sand wedge'],['Pt','Putter']];
 // Detection settings. Full swings: hands rotate hundreds of °/s. Putts: a few dozen.
 const MODES = {
-  full: {start: 300, end: 150, endHold: 80, minPeak: 450, floor: 350, wait: 500},
+  full: {start: 180, end: 100, endHold: 80, minPeak: 220, floor: 150, wait: 500},
+  // wedges and short irons: soft chips and even putting-style strokes still count
+  chip: {start: 70, end: 35, endHold: 110, minPeak: 100, floor: 60, wait: 400},
   putt: {start: 40, end: 20, endHold: 120, minPeak: 60, floor: 30, wait: 300}
 };
 let club = store.get('wgolf-club', 'Dr');
@@ -102,7 +104,7 @@ let puttFull = store.get('wgolf-puttfull', null);
 const FULL_DEFAULT = 1100, PUTT_DEFAULT = 300;  // from your first test session
 let face0 = store.get('wgolf-face0', null);      // your 'straight' face reading, from the setup swings
 let calibrating = null;                          // {mode, peaks: [], faces: []}
-const mode = () => club === 'Pt' ? 'putt' : 'full';
+const mode = () => club === 'Pt' ? 'putt' : ['9i', 'PW', 'SW'].includes(club) ? 'chip' : 'full';
 
 setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still practise here.');
 if (!window.isSecureContext) setMsg('Open this page from its https:// address, or motion will be blocked.');
@@ -292,6 +294,7 @@ function aimBtn(el, d){
 }
 aimBtn($('#aimL'), -1); aimBtn($('#aimR'), 1);
 $('#mapB').onclick = () => send({t:'view'});
+$('#readB').onclick = () => send({t:'read'});
 
 // ---------- hold pad ----------
 const pad = $('#pad'); const pointers = new Set();

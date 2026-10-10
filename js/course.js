@@ -42,7 +42,7 @@ class Course {
     this.bunkers = mk(data.bunkers); this.water = mk(data.water); this.bounds = mk(data.bounds);
     this.creeks = (data.creeks || []).map(a => ({a, b: bbox(a)}));
     this.extent = this.bounds.reduce((e, p) => [Math.min(e[0], p.b[0]), Math.min(e[1], p.b[1]), Math.max(e[2], p.b[2]), Math.max(e[3], p.b[3])], [Infinity, Infinity, -Infinity, -Infinity]);
-    this.trees = this.buildTrees();
+    this.trees = this.buildTrees(); if (window.GolfTrees) GolfTrees.dress(this.trees);
     this.grid = new Map();
     for (const t of this.trees){ const k = this.key(t.x, t.y); if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(t); }
   }
@@ -72,7 +72,7 @@ class Course {
     const d = this.d, out = [], r = rng(20261010);
     const add = (x, y, s) => { if (!this.inBounds(x, y) && s !== 'edge') return;
       if (this.hit(this.greens, x, y, 3) || this.hit(this.tees, x, y, 2) || this.hit(this.bunkers, x, y, 1) || this.hit(this.fairways, x, y, -2) || this.inWater(x, y)) return;
-      out.push({x, y, r: 2.6 + r()*2.2, h: 8 + r()*7, kind: r() < 0.35 ? 1 : 0}); };
+      out.push({x, y, r: 4, h: 15, base: 7}); };   // real kinds and sizes are set by GolfTrees.dress
     for (const t of d.trees || []) add(t[0], t[1]);
     for (const row of d.treeRows || []) for (let i = 2; i < row.length; i += 2){
       const ax = row[i-2], ay = row[i-1], bx = row[i], by = row[i+1], L = Math.hypot(bx-ax, by-ay);

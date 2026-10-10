@@ -29,15 +29,23 @@ function fullShot(course, s){
   carry *= 1 + along * 0.012 * C.wind;
   const drift = cross * 0.9 * C.wind * carry / 100;
   let curve = s.side || 0;                                 // metres right (+) / left (-) from the face
-  const apex = C.apex * (0.55 + 0.45 * Math.min(1, s.power)) * (s.lie === 'bunker' ? 0.9 : 1);
-  const pos = t => { const a = carry * t, sd = curve * t * t + drift * t; return [s.from[0] + ux*a + rx*sd, s.from[1] + uy*a + ry*sd, apex * 4 * t * (1 - t)]; };
-  const samples = []; let hitTree = null, endT = 1;
+  // short shots fly lower: a 30 m pitch peaks around 8 m, a full drive around 28 m
+  const apex = C.apex * Math.max(0.25, Math.min(1, carry / C.max)) * (s.lie === 'bunker' ? 0.9 : 1);
+  // the ball flies over real ground: it lands sooner going uphill and later going downhill
+  const H = course.terrain ? (x, y) => course.terrain.height(x, y) : () => 0, z0 = H(s.from[0], s.from[1]);
+  const pos = t => { const a = carry * t, sd = curve * t * t + drift * t, x = s.from[0] + ux*a + rx*sd, y = s.from[1] + uy*a + ry*sd;
+    return [x, y, z0 + apex * 4 * t * (1 - t) - H(x, y)]; };          // [x, y, height above the ground there]
+  const samples = [], luck = new Map(); let hitTree = null, endT = 1;
   const N = Math.max(40, Math.round(carry / 2));
-  for (let i = 0; i <= N; i++){
-    const t = i / N, p = pos(t); samples.push(p);
-    if (i > 2 && p[2] < 18){
+  for (let i = 0; i <= N * 1.8; i++){
+    const t = i / N; let p = pos(t);
+    if (t > 0.3 && p[2] <= 0){ p[2] = 0; samples.push(p); break; }     // touched down
+    samples.push(p);
+    if (i > 2 && p[2] < 32){
       for (const tr of course.treesNear(p[0], p[1])){
-        if (Math.hypot(p[0] - tr.x, p[1] - tr.y) < tr.r * 0.85 && p[2] < tr.h){ hitTree = tr; endT = t; break; }
+        const h = GolfTrees.hits(tr, p[0], p[1], p[2]); if (!h) continue;
+        if (h === 'outer'){ if (!luck.has(tr)) luck.set(tr, Math.random() < 0.35); if (!luck.get(tr)) continue; }   // one roll of the dice per tree
+        hitTree = tr; endT = t; break;
       }
     }
     if (hitTree) break;
@@ -63,18 +71,19 @@ function fullShot(course, s){
     while (remaining > 0.05){
       const step = Math.min(0.5, remaining); x += dx * step; y += dy * step;
       const l = course.lie(x, y);
-      remaining -= step * (l === 'rough' ? 3 : l === 'fringe' ? 1.6 : 1);
-      if (s.pin && Math.hypot(x - s.pin[0], y - s.pin[1]) < 0.15 && remaining < 2.5){ holed = true; x = s.pin[0]; y = s.pin[1]; lie = 'green'; rollTrack.push([x, y]); break; }
+      const g = course.terrain ? course.terrain.grad(x, y) : [0, 0], up = g[0]*dx + g[1]*dy;   // rolls further downhill
+      remaining -= step * (l === 'rough' ? 3 : l === 'fringe' ? 1.6 : 1) * Math.max(0.3, 1 + up * 12);
+      if (s.pin && Math.hypot(x - s.pin[0], y - s.pin[1]) < 0.09 && remaining < 2.5){ holed = true; x = s.pin[0]; y = s.pin[1]; lie = 'green'; rollTrack.push([x, y]); break; }
       rollTrack.push([x, y]); lie = l;
       if (l === 'water' || l === 'ob' || l === 'bunker') break;
     }
     rest = [x, y];
   }
-  if (!holed && s.pin && Math.hypot(rest[0] - s.pin[0], rest[1] - s.pin[1]) < 0.2){ holed = true; rest = s.pin.slice(); }
+  if (!holed && s.pin && Math.hypot(rest[0] - s.pin[0], rest[1] - s.pin[1]) < 0.08){ holed = true; rest = s.pin.slice(); }
   return {samples, rollTrack, land, rest, lie, holed, events, carry: Math.hypot(land[0] - s.from[0], land[1] - s.from[1])};
 }
 
-// Putt on a gently sloping green. slope = [sx, sy] is the downhill pull in m/s².
+// Putt. s.field (optional) is the green's slope surface; works from the fringe and rough too.
 function putt(course, s){
   const ang = s.ang, D = Math.max(0.3, 20 * s.power * (s.max ? s.max / 20 : 1));
   const decel = 0.55, cup = s.pin;
@@ -84,16 +93,17 @@ function putt(course, s){
   for (let i = 0; i < 120 * 30; i++){
     const sp = Math.hypot(vx, vy); if (sp < 0.03) break;
     const l = course.lie(x, y);
-    const k = l === 'green' ? 1 : l === 'fringe' ? 3 : l === 'rough' ? 9 : 4;
+    const k = l === 'green' ? 1 : l === 'fringe' ? 1.8 : l === 'rough' ? 4.5 : l === 'tee' || l === 'fairway' ? 1.4 : 4;
     const a = decel * k;
     vx -= (vx / sp) * a * dt; vy -= (vy / sp) * a * dt;
-    if (l === 'green' || l === 'fringe'){ vx += (s.slope ? s.slope[0] : 0) * dt; vy += (s.slope ? s.slope[1] : 0) * dt; }
+    const fld = s.field && (l === 'green' || l === 'fringe') ? s.field : course.terrain;   // off the green, the ground's own slope
+    if (fld){ const a2 = GolfGreens.slopeAccel(fld, x, y); vx += a2[0] * dt; vy += a2[1] * dt; }
     if (Math.hypot(vx, vy) > sp) { const n = Math.hypot(vx, vy); vx *= sp / n; vy *= sp / n; }
     x += vx * dt; y += vy * dt;
     if (i % 6 === 0) track.push([x, y]);
     const dc = Math.hypot(x - cup[0], y - cup[1]);
-    if (dc < 0.11){
-      if (sp < 1.5){ holed = true; x = cup[0]; y = cup[1]; track.push([x, y]); break; }
+    if (dc < 0.075){
+      if (sp < 1.35){ holed = true; x = cup[0]; y = cup[1]; track.push([x, y]); break; }
       if (!lip){ lip = true; vx *= 0.6; vy *= 0.6; const t = Math.random() < 0.5 ? 0.35 : -0.35; const c = Math.cos(t), sn = Math.sin(t); [vx, vy] = [vx*c - vy*sn, vx*sn + vy*c]; }
     }
     lie = course.lie(x, y);

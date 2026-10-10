@@ -41,14 +41,23 @@ body{background:#9fd3f5}
 #mini{width:200px;height:290px;border-radius:10px;display:block}
 .br .row{display:flex;gap:6px}
 .br button{flex:1;padding:8px 10px;font-size:14px}
+.br button.on{background:#2c7a4c;color:#fff;border-color:#2c7a4c}
 #banner{position:absolute;left:50%;bottom:calc(120px + env(safe-area-inset-bottom,0px));transform:translate(-50%,10px);padding:12px 20px;font-size:18px;font-weight:600;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;max-width:min(560px,90vw);text-align:center}
 #banner.show{opacity:1;transform:translate(-50%,0)}
 #holeCard{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%) scale(.96);padding:22px 40px;text-align:center;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
 #holeCard.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #cardA{font-family:var(--display);font-size:64px;font-weight:700;line-height:1;color:var(--fairway)}
 #cardB{font-size:18px;color:var(--panel-muted);margin-top:6px}
-#powerBar{position:absolute;left:50%;bottom:calc(70px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:320px;height:16px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.7)}
-#powerFill{height:100%;width:0;background:linear-gradient(90deg,#7cc98f,#2c7a4c 70%,#e0a33d 92%,#d0533f)}
+/* Wii-style swing bar: fills as you swing; the white line is 100%, red above it is an overswing */
+#meter{position:absolute;left:16px;top:50%;transform:translateY(-50%);padding:10px 8px;display:grid;gap:6px;justify-items:center;width:58px}
+#meter .track{position:relative;width:22px;height:240px;border-radius:12px;background:#e3e9e1;overflow:hidden;border:2px solid #fff;box-shadow:inset 0 1px 4px rgba(0,0,0,.18)}
+#meter .over{position:absolute;left:0;right:0;top:0;height:calc(100% * 30 / 130);background:repeating-linear-gradient(-45deg,#f6c9c2,#f6c9c2 5px,#fbe2de 5px,#fbe2de 10px)}
+#meter .fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(0deg,#5bbf74,#2c7a4c 55%,#e0a33d 77%,#d0533f 90%);transition:height .06s linear}
+#meter .peak{position:absolute;left:-2px;right:-2px;height:3px;background:#17231b;bottom:0;opacity:0}
+#meter .full{position:absolute;left:-2px;right:-2px;height:3px;background:#fff;bottom:calc(100% * 100 / 130);box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+#meter .pinTick{position:absolute;left:-6px;width:10px;height:10px;transform:translateY(50%) rotate(45deg);background:#ffe066;border:1px solid #9a7a10;bottom:0;display:none}
+#meter b{font-family:var(--display);font-size:18px;font-variant-numeric:tabular-nums}
+#meter.done .fill{transition:height .25s ease}
 /* menu and modals */
 .overlay{position:fixed;inset:0;display:grid;place-items:center;padding:16px;background:rgba(14,30,20,.35);z-index:5}
 #menu{background:linear-gradient(180deg,#9fd3f5 0%,#cfe9f7 45%,#7cc04a 45.2%,#5fa83c 100%)}
@@ -82,7 +91,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
 #scoreTable td.under span{display:inline-grid;place-items:center;width:28px;height:28px;color:#fff;background:#2c7a4c;border-radius:50%}
 #scoreTable td.over{color:#b3372b;font-weight:700}
 .scoreBox .acts{display:flex;gap:10px;justify-content:flex-end}
-@media (max-width:760px){ #mini{width:130px;height:190px} .tc{display:none} .holeNum{font-size:40px} .bl{min-width:0} }
+@media (max-width:760px){ #mini{width:130px;height:190px} .tc{display:none} .holeNum{font-size:40px} .bl{min-width:0} #meter .track{height:150px} }
 </style>
 </head>
 <body>
@@ -107,14 +116,18 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
     <div class="row"><span class="k">To the pin</span><span class="big" id="hPin">–</span></div>
     <div class="row"><span class="k">Club</span><span class="mid" id="hClub">Driver</span></div>
     <div class="row"><span class="k" id="hClubMax">Up to 230 m</span><span class="k" id="hLie">Tee</span></div>
+    <div class="row" id="playsRow" hidden><span class="k">Plays like</span><span class="mid" id="hPlays"></span></div>
     <div id="hint"></div>
   </section>
   <section class="panel br">
     <canvas id="mini" width="400" height="580" aria-label="Map of this hole"></canvas>
-    <div class="row"><button id="mapBtn">Overhead view</button></div>
+    <div class="row"><button id="mapBtn">Overhead</button><button id="readBtn">Read green</button></div>
   </section>
   <div class="panel" id="banner" role="status"></div>
-  <div id="powerBar" hidden><div id="powerFill"></div></div>
+  <section class="panel" id="meter" aria-label="Swing power">
+    <div class="track"><div class="over"></div><div class="fill" id="mFill"></div><div class="peak" id="mPeak"></div><div class="full"></div><div class="pinTick" id="mPin" title="Power to reach the pin"></div></div>
+    <b id="mLab">0%</b>
+  </section>
 </div>
 <div class="panel" id="holeCard" aria-live="polite"><div id="cardA"></div><div id="cardB"></div></div>
 
@@ -136,7 +149,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
       <label>Hook and slice <select id="curveSel"><option value="off">Off</option><option value="gentle">Gentle</option><option value="full">Full</option></select></label>
       <label><input type="checkbox" id="windChk"> Wind</label>
     </div>
-    <div class="menuFoot"><span>Set up your swing first in the <a href="lab.html">Swing Lab</a>.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</span></div>
+    <div class="menuFoot"><span>Set up your swing first in the <a href="lab.html">Swing Lab</a>.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Elevation © Geoscience Australia</span></div>
   </div>
 </div>
 
@@ -153,7 +166,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
       </ol>
     </div>
     <div id="qrLink"></div>
-    <div class="keys">No phone? Aim with <kbd>←</kbd> <kbd>→</kbd>, change club with <kbd>↑</kbd> <kbd>↓</kbd>, hold <kbd>Space</kbd> and let go to swing, <kbd>M</kbd> for the overhead view.</div>
+    <div class="keys">No phone? Aim with <kbd>←</kbd> <kbd>→</kbd>, change club with <kbd>↑</kbd> <kbd>↓</kbd> (the putter works from anywhere), hold <kbd>Space</kbd> and let go to swing, <kbd>M</kbd> overhead view, <kbd>G</kbd> read the green.</div>
     <div style="display:flex;justify-content:flex-end"><button id="pairClose">Close</button></div>
   </div>
 </div>
@@ -172,7 +185,12 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
 <script src="vendor/peerjs.min.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="courses/warringah.js"></script>
+<script src="courses/warringah-elev.js"></script>
 <script src="js/course.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/trees.js"></script>
+<script src="js/greens.js"></script>
+<script src="js/golfer.js"></script>
 <script src="js/physics.js"></script>
 <script src="js/scene.js"></script>
 <script src="js/game.js"></script>
