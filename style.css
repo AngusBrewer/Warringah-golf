@@ -1,0 +1,44 @@
+/* Layout: one centred column on the Mac screen; the phone page is a single full-height pad. */
+:root{
+  --bg:#edf1e9; --surface:#ffffff; --surface-2:#f6f8f3; --ink:#17231b; --muted:#5b6a5f; --line:#d6dfd1;
+  --fairway:#2c7a4c; --fairway-ink:#ffffff; --fairway-soft:#dcefe2; --rough:#c9dcc0; --green-dark:#9fc79f;
+  --sand:#e6d6a8; --flag:#c43f2e; --flag-soft:#f8e0dc; --amber:#9a5f10; --amber-soft:#faeed7;
+  --info:#2a64a3; --info-soft:#e0ebf7;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1511; --surface:#16201a; --surface-2:#1b271f; --ink:#e3ebe5; --muted:#99ab9e; --line:#27362c;
+    --fairway:#5cc489; --fairway-ink:#0e1511; --fairway-soft:#1b3a28; --rough:#1e3526; --green-dark:#2c5a3a;
+    --sand:#5a4e2c; --flag:#ef7b69; --flag-soft:#3b1f1b; --amber:#e6aa59; --amber-soft:#382a15;
+    --info:#7cb2ea; --info-soft:#17283a; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1511; --surface:#16201a; --surface-2:#1b271f; --ink:#e3ebe5; --muted:#99ab9e; --line:#27362c;
+  --fairway:#5cc489; --fairway-ink:#0e1511; --fairway-soft:#1b3a28; --rough:#1e3526; --green-dark:#2c5a3a;
+  --sand:#5a4e2c; --flag:#ef7b69; --flag-soft:#3b1f1b; --amber:#e6aa59; --amber-soft:#382a15;
+  --info:#7cb2ea; --info-soft:#17283a; color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body)}
+h1,h2,.num{font-family:var(--display);letter-spacing:.01em;text-wrap:balance}
+h1{font-size:30px;line-height:1.1;margin:0;font-weight:700}
+h2{font-size:15px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.muted{color:var(--muted)}
+button{font:inherit;border-radius:10px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface-2);color:var(--ink)}
+button.primary{background:var(--fairway);color:var(--fairway-ink);border-color:var(--fairway);font-weight:600}
+button:focus-visible{outline:3px solid var(--info);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+.pill{display:inline-block;flex:none;min-width:86px;text-align:center;font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px;background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.ok .pill{background:var(--fairway-soft);color:var(--fairway);border-color:transparent}
+.bad .pill{background:var(--flag-soft);color:var(--flag);border-color:transparent}
+.run .pill{background:var(--info-soft);color:var(--info);border-color:transparent}
+.warn .pill{background:var(--amber-soft);color:var(--amber);border-color:transparent}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}

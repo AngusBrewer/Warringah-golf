@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#2c7a4c">
+<title>Club · Warringah Golf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+html,body{height:100%}
+body{display:flex;flex-direction:column;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.top{padding:calc(14px + env(safe-area-inset-top,0px)) 16px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.top h1{font-size:24px}
+.chip{font-size:13px;font-weight:600;border-radius:999px;padding:4px 12px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.chip.ok{background:var(--fairway-soft);color:var(--fairway);border-color:transparent}
+.chip.bad{background:var(--flag-soft);color:var(--flag);border-color:transparent}
+.msg{padding:0 16px 10px;color:var(--muted);font-size:15px;min-height:1.5em}
+main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(16px + env(safe-area-inset-bottom,0px));gap:12px;min-height:0}
+.start{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.start button{font-size:20px;padding:18px;border-radius:16px}
+.start p{margin:0;color:var(--muted)}
+.pad{flex:1;border-radius:22px;border:2px solid var(--fairway);background:var(--fairway-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;touch-action:none;text-align:center;transition:background .12s,transform .12s;min-height:260px}
+.pad .big{font-family:var(--display);font-size:40px;font-weight:700;line-height:1;color:var(--fairway)}
+.pad .small{color:var(--muted);font-size:15px;max-width:26ch}
+.pad.held{background:var(--fairway);transform:scale(.985)}
+.pad.held .big,.pad.held .small{color:var(--fairway-ink)}
+.result{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-variant-numeric:tabular-nums}
+.result .num{font-size:40px;font-weight:700;line-height:1}
+.result .num small{font-size:18px;color:var(--muted);margin-left:2px}
+.bar{height:10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--fairway);transition:width .3s ease}
+.live{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Club</h1>
+  <span class="chip" id="chip">Not linked</span>
+</div>
+<div class="msg" id="msg">Starting…</div>
+<main>
+  <section class="start" id="startView">
+    <button class="primary" id="startBtn">Start</button>
+    <p>Your phone will ask to use motion. Tap <b>Allow</b>. Keep this page open while you play.</p>
+  </section>
+  <section class="pad" id="pad" hidden aria-label="Hold to swing">
+    <div class="big" id="padBig">Hold here</div>
+    <div class="small" id="padSmall">Keep your thumb on the pad and swing like a golf shot.</div>
+  </section>
+  <section id="resultView" hidden>
+    <div class="result"><span class="muted">Last swing</span><span class="num" id="pw">–</span></div>
+    <div class="bar"><i id="bar"></i></div>
+  </section>
+  <div class="live" id="live"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
+const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
+const setMsg = t => { $('#msg').textContent = t; };
+const chip = (t, k) => { const c = $('#chip'); c.textContent = t; c.className = 'chip' + (k ? ' ' + k : ''); };
+
+setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still test swings here.');
+if (!window.isSecureContext) setMsg('Open this page from its https:// address, or motion will be blocked.');
+
+// ---------- link ----------
+let peer = null, conn = null, motionStatus = 'pending';
+function send(m){ if (conn && conn.open) { try { conn.send(m); } catch {} } }
+function link(){
+  if (!hostId || typeof Peer === 'undefined') return;
+  chip('Linking…');
+  peer = new Peer({debug: 1});
+  peer.on('open', () => {
+    conn = peer.connect(hostId, {serialization: 'json'});
+    conn.on('open', () => { chip('Linked', 'ok'); send({t:'status', motion: motionStatus, device}); });
+    conn.on('data', m => { if (m && m.t === 'ping') send({t:'pong', at: m.at}); });
+    conn.on('close', () => { chip('Not linked', 'bad'); setMsg('Lost the screen. Reload the page on the Mac, then scan again.'); });
+  });
+  peer.on('error', e => {
+    if (e.type === 'peer-unavailable'){ chip('Not linked', 'bad'); setMsg("Couldn't find the screen. Reload the Swing Test page on your Mac and scan the new code."); }
+    else if (['network','server-error','socket-error'].includes(e.type)){ chip('Not linked', 'bad'); setMsg('No internet connection to the matchmaking server.'); }
+  });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch {} });
+}
+
+// ---------- motion ----------
+let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
+let holding = false, active = false, peak = 0, face = 0, t0 = 0, lowSince = 0, coolUntil = 0;
+
+$('#startBtn').onclick = async () => {
+  $('#startBtn').disabled = true;
+  let perm = 'granted';
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') perm = await DeviceMotionEvent.requestPermission();
+  } catch (e) { perm = 'denied'; }
+  if (perm !== 'granted'){
+    motionStatus = 'denied'; link();
+    setMsg('Motion access was refused. In Safari, tap "aA" → Website Settings, allow Motion & Orientation, then reload.');
+    $('#startBtn').disabled = false; return;
+  }
+  window.addEventListener('devicemotion', onMotion);
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+  $('#startView').hidden = true; $('#pad').hidden = false; $('#resultView').hidden = false;
+  setMsg('Waiting for motion…');
+  link();
+  setTimeout(() => {
+    if (!gotMotion){ motionStatus = 'none'; send({t:'status', motion:'none', device}); setMsg("This browser isn't giving motion data. Try Safari on iPhone or Chrome on Android."); }
+  }, 2000);
+};
+
+function onMotion(e){
+  const rr = e.rotationRate;
+  if (!rr || (rr.alpha == null && rr.beta == null && rr.gamma == null)) return;
+  const now = performance.now(), dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
+  const a = rr.alpha || 0, b = rr.beta || 0, g = rr.gamma || 0;
+  rot = Math.hypot(a, b, g);
+  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device}); setMsg(hostId ? 'Hold the green pad and swing.' : 'Hold the green pad and swing. (Not linked to a screen.)'); }
+
+  // swing detection: only while the pad is held
+  if (!active && holding && now > coolUntil && rot > 300){ active = true; peak = rot; face = 0; t0 = now; lowSince = 0; }
+  if (active){
+    peak = Math.max(peak, rot); face += g * dt;
+    if (rot < 150){ if (!lowSince) lowSince = now; } else lowSince = 0;
+    if ((lowSince && now - lowSince > 80 && now - t0 > 120) || now - t0 > 2000) finish(now);
+  }
+  if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding}); }
+  $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''}`;
+}
+
+// A swing is a backswing burst, a pause at the top, then the faster downswing.
+// Each burst ends at a pause; we hold the best one for a moment so the downswing
+// can replace the backswing, then send whichever was fastest.
+let pending = null, pendingTimer = 0;
+function finish(now){
+  active = false;
+  if (peak >= 450 && (!pending || peak > pending.peak)) pending = {peak, face, dur: now - t0};
+  if (!pending) return;              // only wiggles so far: ignore quietly
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, 500);
+}
+function shoot(p){
+  coolUntil = performance.now() + 600;
+  const power = Math.max(0.03, Math.min(1, (p.peak - 450) / (1700 - 450)));
+  const shot = {t:'swing', power, peak: Math.round(p.peak), face: Math.round(Math.max(-90, Math.min(90, p.face))), dur: Math.round(p.dur)};
+  send(shot);
+  try { navigator.vibrate?.(60); } catch {}
+  $('#pw').innerHTML = Math.round(power * 100) + '<small>%</small>';
+  $('#bar').style.width = Math.round(power * 100) + '%';
+  $('#padBig').textContent = power > 0.92 ? 'Smashed it' : power > 0.6 ? 'Nice swing' : power > 0.3 ? 'Steady' : 'Soft one';
+  setTimeout(() => { $('#padBig').textContent = holding ? 'Swing!' : 'Hold here'; }, 1400);
+}
+
+// ---------- hold pad ----------
+const pad = $('#pad'); const pointers = new Set();
+function setHold(on){
+  holding = on; pad.classList.toggle('held', on);
+  $('#padBig').textContent = on ? 'Swing!' : 'Hold here';
+  if (!on && active) finish(performance.now());
+  send({t:'m', r: Math.round(rot), h: holding});
+}
+pad.addEventListener('pointerdown', e => { pointers.add(e.pointerId); try { pad.setPointerCapture(e.pointerId); } catch {} setHold(true); e.preventDefault(); });
+['pointerup','pointercancel','lostpointercapture'].forEach(ev => pad.addEventListener(ev, e => { pointers.delete(e.pointerId); if (!pointers.size) setHold(false); }));
+pad.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { navigator.wakeLock?.request('screen').catch(() => {}); } else { pointers.clear(); setHold(false); } });
+})();
+</script>
+</body>
+</html>

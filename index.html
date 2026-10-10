@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swing Test · Warringah Golf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 56px;display:grid;gap:16px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+header p{margin:4px 0 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;min-width:0}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
+@media (max-width:760px){.row{grid-template-columns:1fr}}
+.pair{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.qr{width:184px;height:184px;flex:none;border-radius:12px;background:#ffffff;padding:10px;display:grid;place-items:center;border:1px solid var(--line)}
+.qr img,.qr canvas{width:100%;height:100%;image-rendering:pixelated}
+.qr .wait{color:#5b6a5f;font-size:13px;text-align:center}
+.pair ol{margin:0;padding-left:20px;flex:1 1 220px;min-width:0}
+.pair li{margin-bottom:8px}
+.link{font-size:13px;word-break:break-all;color:var(--muted);margin-top:10px}
+ul.checks{list-style:none;margin:0;padding:0}
+ul.checks li{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line)}
+ul.checks li:first-child{border-top:0;padding-top:0}
+.lbl{font-weight:600}.note{color:var(--muted);font-size:14px}
+.verdict{border-radius:14px;padding:16px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+.verdict b{display:block;font-family:var(--display);font-size:22px;line-height:1.15}
+.verdict p{margin:2px 0 0}
+.verdict.info{background:var(--info-soft)} .verdict.info b{color:var(--info)}
+.verdict.good{background:var(--fairway-soft)} .verdict.good b{color:var(--fairway)}
+.verdict.bad{background:var(--flag-soft)} .verdict.bad b{color:var(--flag)}
+.verdict.warn{background:var(--amber-soft)} .verdict.warn b{color:var(--amber)}
+.shot{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px}
+@media (max-width:760px){.shot{grid-template-columns:1fr}}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.stat .k{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.stat .num{font-size:44px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums}
+.stat .num small{font-size:20px;font-weight:600;color:var(--muted);margin-left:2px}
+.stat.small .num{font-size:28px}
+.meter{grid-column:1/-1;height:14px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--fairway);transition:width .4s ease}
+canvas.view{width:100%;display:block;border-radius:12px}
+#flight{height:300px;background:var(--rough)}
+#graph{height:150px;background:var(--surface-2)}
+.hist{list-style:none;margin:12px 0 0;padding:0;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hist li{display:flex;justify-content:space-between;gap:10px;border-top:1px dashed var(--line);padding:4px 0}
+.readout{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
+.readout b{color:var(--ink)}
+details summary{cursor:pointer;font-weight:600}
+pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);max-height:240px;overflow:auto;margin:10px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Swing Test</h1>
+      <p class="muted">Your phone is the club, this screen is the course. Checks the link before we build Warringah.</p>
+    </div>
+    <button id="copyBtn">Copy results for Claude</button>
+  </header>
+
+  <section class="verdict info" id="verdict">
+    <div><b id="vTitle">Getting the screen ready…</b><p id="vText">This takes a second or two.</p></div>
+  </section>
+
+  <div class="row">
+    <section class="card">
+      <h2>Link your phone</h2>
+      <div class="pair">
+        <div class="qr" id="qr"><span class="wait">Making a code…</span></div>
+        <ol>
+          <li>Put your phone on the <b>same Wi-Fi</b> as this Mac.</li>
+          <li>Scan the code with the phone's camera and open the link.</li>
+          <li>Tap <b>Start</b> on the phone and allow motion access.</li>
+          <li>Hold the green pad with your thumb and <b>swing like a golf shot</b>. Grip tight and keep clear of the TV.</li>
+        </ol>
+      </div>
+      <div class="link" id="link"></div>
+    </section>
+
+    <section class="card">
+      <h2>Checklist</h2>
+      <ul class="checks" id="checks">
+        <li data-k="screen"><span class="pill">Waiting</span><div><div class="lbl">Screen online</div><div class="note"></div></div></li>
+        <li data-k="phone"><span class="pill">Waiting</span><div><div class="lbl">Phone linked</div><div class="note"></div></div></li>
+        <li data-k="motion"><span class="pill">Waiting</span><div><div class="lbl">Phone motion sensor</div><div class="note"></div></div></li>
+        <li data-k="hold"><span class="pill">Waiting</span><div><div class="lbl">Hold-to-swing pad</div><div class="note"></div></div></li>
+        <li data-k="swing"><span class="pill">Waiting</span><div><div class="lbl">Golf swing detected</div><div class="note"></div></div></li>
+        <li data-k="delay"><span class="pill">Waiting</span><div><div class="lbl">Delay between phone and screen</div><div class="note"></div></div></li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Last shot · Driver</h2>
+    <div class="shot">
+      <div>
+        <div class="stats">
+          <div class="stat"><div class="k">Power</div><div class="num" id="sPower">–</div></div>
+          <div class="stat"><div class="k">Carry</div><div class="num" id="sCarry">–</div></div>
+          <div class="meter"><i id="sMeter"></i></div>
+          <div class="stat small"><div class="k">Swing speed</div><div class="num" id="sSpeed">–</div></div>
+          <div class="stat small"><div class="k">Face turn (rough)</div><div class="num" id="sFace">–</div></div>
+        </div>
+        <ul class="hist" id="hist"></ul>
+      </div>
+      <canvas class="view" id="flight" aria-label="Top-down view of the last shot"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live from the phone</h2>
+    <canvas class="view" id="graph" aria-label="Live phone rotation graph"></canvas>
+    <div class="readout"><span>Rotation <b id="rNow">–</b> °/s</span><span>Pad <b id="hNow">–</b></span><span>Delay <b id="dNow">–</b></span><span>A full swing spikes well past the dashed line.</span></div>
+  </section>
+
+  <details class="card">
+    <summary>Technical log</summary>
+    <pre id="log"></pre>
+  </details>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const logEl = $('#log');
+function log(m){ logEl.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`; logEl.scrollTop = logEl.scrollHeight; }
+function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }
+
+const PILL = {wait:'Waiting', ok:'Working', bad:'Problem', run:'Checking…', warn:'Slow'};
+const state = {screen:'wait', phone:'wait', motion:'wait', hold:'wait', swing:'wait', delay:'wait'};
+const notes = {};
+function setCheck(k, s, n){ state[k] = s; if (n !== undefined) notes[k] = n; render(); }
+function render(){
+  document.querySelectorAll('#checks li').forEach(li => {
+    const k = li.dataset.k; li.className = state[k];
+    li.querySelector('.pill').textContent = PILL[state[k]];
+    li.querySelector('.note').textContent = notes[k] || '';
+  });
+  let kind = 'info', t, p;
+  if (state.screen === 'bad'){ kind = 'bad'; t = "The screen couldn't go online."; p = notes.screen || 'Check the Mac is on the internet, then reload this page.'; }
+  else if (state.swing === 'ok'){
+    kind = state.delay === 'warn' ? 'warn' : 'good';
+    t = kind === 'good' ? 'It works. Your phone can be the club.' : 'It works, with a little lag.';
+    p = 'Try a soft swing and a full one: power and carry should change. Then copy the results and send them to Claude.';
+  }
+  else if (state.motion === 'ok'){ t = 'Motion is coming through. Hold the pad and swing.'; p = 'The swing only counts while your thumb is on the green pad.'; }
+  else if (state.motion === 'bad'){ kind = 'bad'; t = "The phone linked but isn't sending motion."; p = notes.motion; }
+  else if (state.phone === 'ok'){ t = 'Phone linked. Tap Start on the phone.'; p = 'Allow motion access when it asks.'; }
+  else if (state.screen === 'ok'){ t = 'Scan the code with your phone.'; p = 'Same Wi-Fi as this Mac works best.'; }
+  else { t = 'Getting the screen ready…'; p = 'This takes a second or two.'; }
+  const v = $('#verdict'); v.className = 'verdict ' + kind; $('#vTitle').textContent = t; $('#vText').textContent = p;
+}
+
+// ---------- peer setup ----------
+const ALPH = 'abcdefghjkmnpqrstuvwxyz23456789';
+const rnd = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => ALPH[b % ALPH.length]).join('');
+let savedId = null; try { savedId = localStorage.getItem('wgolf-screen-id'); } catch {}
+let peer = null, conn = null, tries = 0;
+
+function start(id){
+  if (typeof Peer === 'undefined'){ setCheck('screen','bad','The link library did not load. Reload the page.'); return; }
+  setCheck('screen','run','Connecting…');
+  peer = new Peer(id, {debug: 1});
+  peer.on('open', pid => {
+    try { localStorage.setItem('wgolf-screen-id', pid); } catch {}
+    log('Screen online as ' + pid);
+    setCheck('screen','ok','Ready for a phone.');
+    showQR(pid);
+  });
+  peer.on('connection', c => attach(c));
+  peer.on('disconnected', () => { log('Lost the matchmaking server, reconnecting.'); try { peer.reconnect(); } catch {} });
+  peer.on('error', e => {
+    log('Peer error: ' + e.type + ' ' + (e.message || ''));
+    if (e.type === 'unavailable-id' && tries++ < 3){ peer.destroy(); start('wgolf-' + rnd(6)); return; }
+    if (['network','server-error','socket-error','socket-closed'].includes(e.type) && state.screen !== 'ok') setCheck('screen','bad',"Can't reach the matchmaking server. Check the internet connection and reload.");
+  });
+}
+start(savedId || ('wgolf-' + rnd(6)));
+
+function controllerUrl(id){ return new URL('controller.html', location.href).href.split('#')[0] + '#' + id; }
+function showQR(id){
+  const url = controllerUrl(id);
+  $('#link').textContent = url;
+  if (location.protocol !== 'https:') { $('#link').textContent += '  (open this page from its https:// web address so the phone link works)'; }
+  try {
+    const q = qrcode(0, 'M'); q.addData(url); q.make();
+    $('#qr').innerHTML = q.createImgTag(6, 0);
+  } catch(e){ $('#qr').innerHTML = '<span class="wait">Code failed. Type the link below on your phone.</span>'; log('QR error ' + e.message); }
+}
+
+// ---------- phone connection ----------
+let lastMsg = 0, pingTimer = null, rtts = [];
+function attach(c){
+  if (conn && conn !== c){ try { conn.close(); } catch {} }
+  conn = c; log('Phone connecting…');
+  c.on('open', () => {
+    log('Phone linked.'); setCheck('phone','ok','Linked over ' + (c.reliable ? 'reliable' : 'fast') + ' channel.');
+    if (state.motion === 'wait') setCheck('motion','run','Waiting for the phone to start.');
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => { if (conn && conn.open) conn.send({t:'ping', at: performance.now()}); }, 1500);
+    conn.send({t:'hello'});
+  });
+  c.on('data', onData);
+  c.on('close', () => { if (c !== conn) return; log('Phone disconnected.'); setCheck('phone','bad','The phone disconnected. Open the link on the phone again.'); clearInterval(pingTimer); });
+  c.on('error', e => log('Link error: ' + (e.type || e.message)));
+}
+
+const samples = []; const MAXS = 300; let holdNow = false, rotNow = 0;
+const shots = [];
+function onData(m){
+  if (!m || typeof m !== 'object') return;
+  lastMsg = performance.now();
+  switch (m.t){
+    case 'pong': {
+      const rtt = performance.now() - Number(m.at); if (!(rtt >= 0 && rtt < 10000)) return;
+      rtts.push(rtt); if (rtts.length > 10) rtts.shift();
+      const med = [...rtts].sort((a,b) => a-b)[Math.floor(rtts.length/2)];
+      $('#dNow').textContent = Math.round(med/2) + ' ms';
+      setCheck('delay', med/2 < 120 ? 'ok' : 'warn', `About ${Math.round(med/2)} ms each way` + (med/2 < 120 ? '. Feels instant.' : '. Playable, but you may notice it.'));
+      break;
+    }
+    case 'status':
+      if (m.motion === 'ok' && state.motion !== 'ok') setCheck('motion','ok', 'Live motion from ' + (String(m.device || 'the phone').slice(0,40)) + '.');
+      else if (m.motion === 'denied') setCheck('motion','bad','Motion access was refused on the phone. Reload the phone page and tap Allow.');
+      else if (m.motion === 'none') setCheck('motion','bad',"The phone's browser isn't giving motion data. Try Safari on iPhone or Chrome on Android.");
+      break;
+    case 'm': {
+      const r = Math.max(0, Math.min(3000, Number(m.r) || 0));
+      rotNow = r; holdNow = !!m.h;
+      samples.push({r, h: holdNow}); if (samples.length > MAXS) samples.shift();
+      if (state.motion !== 'ok' && r > 0) setCheck('motion','ok','Live motion is arriving.');
+      if (holdNow && state.hold !== 'ok') setCheck('hold','ok','Pad pressed. Swings only count while it is held.');
+      break;
+    }
+    case 'swing': {
+      const s = {
+        power: Math.max(0, Math.min(1, Number(m.power) || 0)),
+        peak: Math.max(0, Math.min(3000, Number(m.peak) || 0)),
+        face: Math.max(-90, Math.min(90, Number(m.face) || 0)),
+        dur: Math.max(0, Math.min(3000, Number(m.dur) || 0))
+      };
+      addShot(s); break;
+    }
+  }
+}
+
+function addShot(s){
+  s.carry = Math.round(230 * Math.pow(s.power, 0.85));
+  s.side = Math.max(-25, Math.min(25, s.face * 0.3)) * (s.carry / 230);
+  shots.unshift(s); if (shots.length > 6) shots.length = 6;
+  $('#sPower').innerHTML = Math.round(s.power*100) + '<small>%</small>';
+  $('#sCarry').innerHTML = s.carry + '<small>m</small>';
+  $('#sSpeed').innerHTML = Math.round(s.peak) + '<small>°/s</small>';
+  $('#sFace').innerHTML = (s.face > 0 ? '+' : '') + Math.round(s.face) + '<small>°</small>';
+  $('#sMeter').style.width = Math.round(s.power*100) + '%';
+  $('#hist').innerHTML = shots.map((x, i) => `<li><span>Shot ${shots.length - i}</span><span>${Math.round(x.power*100)}% · ${x.carry} m · ${Math.round(x.peak)}°/s</span></li>`).join('');
+  flight = {s, t0: performance.now()};
+  if (state.swing !== 'ok') setCheck('swing','ok', `First swing: ${Math.round(s.power*100)}% power, ${s.carry} m carry.`);
+}
+
+// ---------- drawing ----------
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function fit(cv){ const r = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w*r) || cv.height !== Math.round(h*r)){ cv.width = Math.round(w*r); cv.height = Math.round(h*r); }
+  const c = cv.getContext('2d'); c.setTransform(r,0,0,r,0,0); return [c, w, h]; }
+
+let flight = null;
+function drawFlight(now){
+  const [c, w, h] = fit($('#flight')); c.clearRect(0,0,w,h);
+  const top = 18, bottom = h - 26, cx = w/2, scale = (bottom - top) / 250; // metres → px
+  // fairway
+  c.fillStyle = css('--fairway-soft');
+  c.beginPath(); c.moveTo(cx-34, bottom+20); c.bezierCurveTo(cx-70, bottom-120, cx-60, top+60, cx-46, top); c.lineTo(cx+46, top); c.bezierCurveTo(cx+60, top+60, cx+70, bottom-120, cx+34, bottom+20); c.closePath(); c.fill();
+  // bunker
+  c.fillStyle = css('--sand'); c.beginPath(); c.ellipse(cx+62, bottom - 205*scale, 16, 9, -0.3, 0, Math.PI*2); c.fill();
+  // distance marks
+  c.font = '12px ' + css('--body'); c.fillStyle = css('--muted'); c.strokeStyle = css('--line'); c.setLineDash([3,4]); c.lineWidth = 1;
+  for (const d of [50,100,150,200,250]){ const y = bottom - d*scale; c.beginPath(); c.moveTo(14, y); c.lineTo(w-14, y); c.stroke(); c.fillText(d + ' m', 16, y - 4); }
+  c.setLineDash([]);
+  // tee
+  c.fillStyle = css('--ink'); c.fillRect(cx-6, bottom+6, 12, 4);
+  if (!flight){ c.fillStyle = css('--muted'); c.textAlign = 'center'; c.fillText('Your shot will appear here', cx, h/2); c.textAlign = 'left'; return; }
+  const {s} = flight, k = Math.min(1, (now - flight.t0) / 1400), e = 1 - Math.pow(1-k, 3);
+  const endX = cx + s.side * scale * 2.2, endY = bottom - s.carry * scale;
+  const ctrlX = cx + s.side * scale * 0.4;
+  const pt = t => [ (1-t)*(1-t)*cx + 2*(1-t)*t*ctrlX + t*t*endX, (1-t)*(1-t)*bottom + 2*(1-t)*t*((bottom+endY)/2) + t*t*endY ];
+  c.strokeStyle = css('--ink'); c.globalAlpha = .55; c.lineWidth = 2; c.beginPath();
+  for (let i = 0; i <= 40; i++){ const t = e * i/40; const [x,y] = pt(t); i ? c.lineTo(x,y) : c.moveTo(x,y); }
+  c.stroke(); c.globalAlpha = 1;
+  const [bx, by] = pt(e);
+  c.fillStyle = '#ffffff'; c.strokeStyle = css('--ink'); c.lineWidth = 1.5; c.beginPath(); c.arc(bx, by, 5, 0, Math.PI*2); c.fill(); c.stroke();
+  if (k >= 1){ c.fillStyle = css('--ink'); c.font = '600 14px ' + css('--body'); c.fillText(s.carry + ' m', bx + 10, by + 4); }
+}
+
+function drawGraph(){
+  const [c, w, h] = fit($('#graph')); c.clearRect(0,0,w,h);
+  const maxR = 2000, y = r => h - 8 - (Math.min(r, maxR) / maxR) * (h - 16);
+  c.font = '11px ' + css('--body'); c.lineWidth = 1;
+  c.strokeStyle = css('--line'); c.fillStyle = css('--muted');
+  for (const r of [1000, 2000]){ c.beginPath(); c.moveTo(0, y(r)); c.lineTo(w, y(r)); c.stroke(); c.fillText(r + ' °/s', 6, y(r) + 12); }
+  c.setLineDash([5,4]); c.strokeStyle = css('--amber'); c.beginPath(); c.moveTo(0, y(400)); c.lineTo(w, y(400)); c.stroke(); c.setLineDash([]);
+  const step = w / (MAXS - 1), off = MAXS - samples.length;
+  // held regions
+  c.fillStyle = css('--fairway-soft');
+  samples.forEach((s, i) => { if (s.h) c.fillRect((i + off) * step, 0, step + 1, h); });
+  if (samples.length > 1){
+    c.strokeStyle = css('--fairway'); c.lineWidth = 2; c.beginPath();
+    samples.forEach((s, i) => { const px = (i + off) * step, py = y(s.r); i ? c.lineTo(px, py) : c.moveTo(px, py); });
+    c.stroke();
+  }
+  $('#rNow').textContent = samples.length ? Math.round(rotNow) : '–';
+  $('#hNow').textContent = samples.length ? (holdNow ? 'held' : 'off') : '–';
+}
+(function loop(t){ drawFlight(t || performance.now()); drawGraph(); requestAnimationFrame(loop); })();
+
+// ---------- copy ----------
+$('#copyBtn').onclick = async () => {
+  const L = {screen:'Screen online', phone:'Phone linked', motion:'Phone motion', hold:'Hold pad', swing:'Swing detected', delay:'Delay'};
+  const lines = ['Swing test results (phone controller)', new Date().toString(), navigator.userAgent, ''];
+  for (const k in L) lines.push(`${L[k]}: ${PILL[state[k]]}${notes[k] ? ' — ' + notes[k] : ''}`);
+  lines.push('', 'Shots: ' + (shots.map(s => `${Math.round(s.power*100)}% ${s.carry}m peak ${Math.round(s.peak)}°/s face ${Math.round(s.face)}° ${s.dur}ms`).join(' | ') || 'none'),
+    '', '--- log ---', logEl.textContent.trim().split('\n').slice(-20).join('\n'));
+  const text = lines.join('\n');
+  try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your chat with Claude.'); }
+  catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied.'); }
+};
+
+render();
+})();
+</script>
+</body>
+</html>
