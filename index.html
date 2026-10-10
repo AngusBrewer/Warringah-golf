@@ -137,7 +137,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
   <section class="card">
     <h2>Live from the phone</h2>
     <canvas class="view" id="graph" aria-label="Live phone rotation graph"></canvas>
-    <div class="readout"><span>Rotation <b id="rNow">–</b> °/s</span><span>Pad <b id="hNow">–</b></span><span>Delay <b id="dNow">–</b></span></div>
+    <div class="readout"><span>Rotation <b id="rNow">–</b> °/s</span><span>Pad <b id="hNow">–</b></span><span>Delay <b id="dNow">–</b></span><span>Last swing received <b id="lastRx">none yet</b></span></div>
   </section>
 
   <details class="card">
@@ -195,7 +195,7 @@ function start(id){
 start(store.get('wgolf-screen-id', null) || ('wgolf-' + rnd(6)));
 
 function showQR(id){
-  const url = new URL('controller.html', location.href).href.split('#')[0] + '#' + id;
+  const url = new URL('controller.html?v=3', location.href).href.split('#')[0] + '#' + id;
   $('#link').textContent = url;
   try { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qr').innerHTML = q.createImgTag(6, 0); }
   catch(e){ $('#qr').innerHTML = '<span class="wait">Code failed. Type the link below on your phone.</span>'; }
@@ -242,10 +242,11 @@ function onData(m){
       samples.push({r: rotNow, h: holdNow}); if (samples.length > MAXS) samples.shift(); break;
     }
     case 'swing': {
-      if (!CLUBS[m.club]) return;
-      const s = {club: m.club, cal: !!m.cal, power: num(m.power, 0, 1), over: !!m.over, peak: num(m.peak, 0, 3000), face: num(m.face, -120, 120), dur: num(m.dur, 0, 5000), at: Date.now()};
+      $('#lastRx').textContent = new Date().toLocaleTimeString();
+      if (!CLUBS[m.club]){ log('Swing from an old phone page (no club). Reload the page on the phone.'); toast('Reload the Club page on your phone to get the club buttons'); }
+      const s = {club: CLUBS[m.club] ? m.club : club, cal: !!m.cal, power: num(m.power, 0, 1), over: !!m.over, peak: num(m.peak, 0, 3000), face: num(m.face, -120, 120), dur: num(m.dur, 0, 5000), at: Date.now()};
       club = s.club;
-      if (s.cal){ log(`Setup swing ${Math.round(s.peak)} °/s, face ${s.face}°`); lastShot = null; renderAll(); return; }
+      if (s.cal){ log(`Setup swing ${Math.round(s.peak)} °/s, face ${s.face}°`); toast('Setup swing recorded (not shown on the range)'); renderAll(); return; }
       s.noise = (Math.random() * 2 - 1);  // fixed per shot so re-modelling is stable
       model(s); shots.push(s); if (shots.length > 400) shots.splice(0, shots.length - 400);
       store.set('wgolf-shots', shots);
@@ -338,6 +339,8 @@ function drawRange(now){
   const list = shots.filter(s => s.club === club).slice(-12);
   list.forEach(s => { if (anim && s === anim.s) return; const [x, y] = pos(s);
     c.globalAlpha = .45; c.fillStyle = '#ffffff'; c.strokeStyle = css('--ink'); c.lineWidth = 1; c.beginPath(); c.arc(x, y, 3.5, 0, Math.PI*2); c.fill(); c.stroke(); c.globalAlpha = 1; });
+  if (!$('#calBar').hidden){ c.fillStyle = css('--amber'); c.textAlign = 'center'; c.font = '600 15px ' + css('--body');
+    c.fillText('Setting your full swing. These swings are not shown here.', cx, top + 40); c.textAlign = 'left'; }
   if (!list.length){ c.fillStyle = css('--muted'); c.textAlign = 'center'; c.font = '14px ' + css('--body');
     c.fillText(putt ? 'Putts land here' : 'Shots land here', cx, (top + bottom) / 2 + 40); c.textAlign = 'left'; }
   // last shot flight
@@ -348,7 +351,8 @@ function drawRange(now){
     c.strokeStyle = css('--ink'); c.globalAlpha = .6; c.lineWidth = 2; c.beginPath();
     for (let i = 0; i <= 40; i++){ const [x,y] = pt(e*i/40); i ? c.lineTo(x,y) : c.moveTo(x,y); } c.stroke(); c.globalAlpha = 1;
     const [bx, by] = pt(e);
-    c.fillStyle = '#ffffff'; c.strokeStyle = css('--ink'); c.lineWidth = 1.5; c.beginPath(); c.arc(bx, by, 5, 0, Math.PI*2); c.fill(); c.stroke();
+    c.fillStyle = '#ffffff'; c.strokeStyle = css('--ink'); c.lineWidth = 1.5; c.beginPath(); c.arc(bx, by, 7, 0, Math.PI*2); c.fill(); c.stroke();
+    if (k >= 1){ c.strokeStyle = css('--flag'); c.lineWidth = 2; c.beginPath(); c.arc(bx, by, 14, 0, Math.PI*2); c.stroke(); }
     if (k >= 1){ c.fillStyle = css('--ink'); c.font = '600 14px ' + css('--body'); c.fillText((putt ? s.carry.toFixed(1) : s.carry) + ' m', bx + 10, by + 4); }
   }
 }
