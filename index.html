@@ -43,7 +43,8 @@ header p{margin:4px 0 0}
 .setup dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-variant-numeric:tabular-nums}
 .setup dt{color:var(--muted)} .setup dd{margin:0;font-weight:600}
 .setup .hint{font-size:14px;color:var(--muted);margin:10px 0 0}
-.setup label{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:15px;cursor:pointer}
+.setup label{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:15px;cursor:pointer;flex-wrap:wrap}
+.setup select{font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink)}
 .calbar{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--amber-soft);color:var(--amber);font-weight:600}
 canvas.view{width:100%;display:block;border-radius:12px}
 #range{height:460px;background:var(--rough)}
@@ -110,12 +111,16 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
         <h2>Your swing</h2>
         <dl>
           <dt>Full swing</dt><dd id="fullV">not set</dd>
+          <dt>Straight</dt><dd id="straightV">not set</dd>
           <dt>Full putt</dt><dd id="puttV">not set</dd>
         </dl>
         <div class="calbar" id="calBar" hidden></div>
         <p class="hint">Set these on the phone. A swing as fast as your full swing is 100% power. Faster than that is an overswing, which costs accuracy, like on the Wii.</p>
+        <label for="curve">Hook and slice
+          <select id="curve"><option value="off">Off: every shot flies straight</option><option value="gentle">Gentle</option><option value="full">Full: like the Wii</option></select>
+        </label>
         <label><input type="checkbox" id="flip"> Swap hook and slice</label>
-        <p class="hint">Hit a few you think went straight. If they keep curving the same way, or your slices show as hooks, tick this.</p>
+        <p class="hint">Start on Gentle. If a deliberate slice shows as a hook, tick Swap.</p>
       </section>
     </div>
 
@@ -126,7 +131,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
   </div>
 
   <section class="card">
-    <h2>Your bag</h2>
+    <div class="rangehead"><h2>Your bag</h2><button id="clearBtn">Clear shots</button></div>
     <div class="tablewrap"><table id="bag" aria-label="Your distances by club">
       <thead><tr><th>Club</th><th>Shots</th><th>Avg carry</th><th>Longest</th><th>Avg miss</th><th>Overswings</th></tr></thead>
       <tbody></tbody>
@@ -169,10 +174,16 @@ const CLUBS = {
 };
 const ORDER = Object.keys(CLUBS);
 let club = 'Dr';
-let flip = store.get('wgolf-flip', false); $('#flip').checked = flip;
-$('#flip').onchange = e => { flip = e.target.checked; store.set('wgolf-flip', flip); shots.forEach(model); renderAll(); };
-let calib = {full: null, puttFull: null, set: {full:false, putt:false}};
-const shots = store.get('wgolf-shots', []).filter(s => s && CLUBS[s.club]);  // kept between visits
+let flip = store.get('wgolf-flip2', false); $('#flip').checked = flip;
+$('#flip').onchange = e => { flip = e.target.checked; store.set('wgolf-flip2', flip); shots.forEach(model); renderAll(); };
+// How much face angle bends the ball. Gentle forgives small wobbles; Off flies everything straight.
+const CURVE = {off: 0, gentle: 0.5, full: 1};
+let curveMode = store.get('wgolf-curve', 'gentle'); if (!(curveMode in CURVE)) curveMode = 'gentle';
+$('#curve').value = curveMode;
+$('#curve').onchange = e => { curveMode = e.target.value; store.set('wgolf-curve', curveMode); shots.forEach(model); renderAll(); };
+let calib = {full: null, puttFull: null, face0: null, set: {full:false, putt:false, face:false}};
+const shots = store.get('wgolf-shots2', []).filter(s => s && CLUBS[s.club]);  // kept between visits
+$('#clearBtn').onclick = () => { shots.length = 0; store.set('wgolf-shots2', shots); anim = null; renderAll(); toast('Bag cleared'); };
 let lastShot = null, anim = null;
 
 // ---------- link ----------
@@ -231,7 +242,7 @@ function onData(m){
     case 'club': if (CLUBS[m.club]){ club = m.club; renderAll(); } break;
     case 'cal': {
       if (m.cancelled){ $('#calBar').hidden = true; break; }
-      if (m.full != null){ calib = {full: num(m.full, 50, 3000), puttFull: num(m.puttFull, 10, 2000), set: {full: !!(m.set && m.set.full), putt: !!(m.set && m.set.putt)}}; $('#calBar').hidden = true; renderSetup(); break; }
+      if (m.full != null){ calib = {full: num(m.full, 50, 3000), puttFull: num(m.puttFull, 10, 2000), face0: m.face0 == null ? null : num(m.face0, -180, 180), set: {full: !!(m.set && m.set.full), putt: !!(m.set && m.set.putt), face: !!(m.set && m.set.face)}}; $('#calBar').hidden = true; renderSetup(); break; }
       const step = num(m.step, 0, 3), what = m.mode === 'putt' ? 'putt' : 'swing';
       $('#calBar').hidden = false;
       $('#calBar').textContent = step < 3 ? `Setting your full ${what}: ${step} of 3 done` + (m.peak ? ` (last ${Math.round(num(m.peak,0,3000))} °/s)` : '') : `Full ${what} saved.`;
@@ -244,12 +255,12 @@ function onData(m){
     case 'swing': {
       $('#lastRx').textContent = new Date().toLocaleTimeString();
       if (!CLUBS[m.club]){ log('Swing from an old phone page (no club). Reload the page on the phone.'); toast('Reload the Club page on your phone to get the club buttons'); }
-      const s = {club: CLUBS[m.club] ? m.club : club, cal: !!m.cal, power: num(m.power, 0, 1), over: !!m.over, peak: num(m.peak, 0, 3000), face: num(m.face, -120, 120), dur: num(m.dur, 0, 5000), at: Date.now()};
+      const s = {club: CLUBS[m.club] ? m.club : club, cal: !!m.cal, power: num(m.power, 0, 1), over: !!m.over, peak: num(m.peak, 0, 3000), face: num(m.face, -120, 120), faceRaw: num(m.faceRaw, -180, 180), faceOld: num(m.faceOld, -720, 720), dur: num(m.dur, 0, 5000), at: Date.now()};
       club = s.club;
-      if (s.cal){ log(`Setup swing ${Math.round(s.peak)} °/s, face ${s.face}°`); toast('Setup swing recorded (not shown on the range)'); renderAll(); return; }
+      if (s.cal){ log(`Setup swing ${Math.round(s.peak)} °/s, face reading ${s.faceRaw}° (old method ${s.faceOld}°)`); toast('Setup swing recorded (not shown on the range)'); renderAll(); return; }
       s.noise = (Math.random() * 2 - 1);  // fixed per shot so re-modelling is stable
       model(s); shots.push(s); if (shots.length > 400) shots.splice(0, shots.length - 400);
-      store.set('wgolf-shots', shots);
+      store.set('wgolf-shots2', shots);
       lastShot = s; anim = {s, t0: performance.now()};
       renderAll(); break;
     }
@@ -258,14 +269,15 @@ function onData(m){
 
 // ---------- shot model ----------
 function model(s){
-  const c = CLUBS[s.club], sign = flip ? -1 : 1;
+  const c = CLUBS[s.club], sign = flip ? -1 : 1, k = CURVE[curveMode];
   if (c.putt){
     s.carry = +(c.max * s.power).toFixed(1);
-    s.side = Math.max(-3, Math.min(3, s.face * sign * 0.04 * s.carry / 10));
+    s.side = k ? Math.max(-3, Math.min(3, s.face * sign * 0.04 * s.carry / 10)) : 0;
     return s;
   }
   s.carry = Math.round(c.max * Math.pow(s.power, 0.9));
-  let side = s.face * sign * 0.8 * c.curve * (s.carry / 100);
+  const eff = Math.sign(s.face) * Math.max(0, Math.abs(s.face) - 5);   // ignore the first 5° either way
+  let side = eff * sign * k * 0.9 * c.curve * (s.carry / 100);
   if (s.over) side += s.noise * 18 * c.curve * (s.carry / 200) + Math.sign(s.noise || 1) * 6;
   s.side = Math.max(-45, Math.min(45, side));
   return s;
@@ -276,6 +288,7 @@ const sideText = (s, putt) => { const a = Math.abs(s.side), lim = putt ? 0.3 : 2
 // ---------- rendering ----------
 function renderSetup(){
   $('#fullV').textContent = calib.full ? Math.round(calib.full) + ' °/s' + (calib.set.full ? '' : ' (starter value, set it on the phone)') : 'not set';
+  $('#straightV').textContent = calib.set.face ? 'set from your setup swings' : 'not set yet: tap Set full swing on the phone';
   $('#puttV').textContent = calib.puttFull ? Math.round(calib.puttFull) + ' °/s' + (calib.set.putt ? '' : ' (starter value)') : 'not set';
 }
 function renderShot(){
@@ -373,12 +386,12 @@ function drawGraph(){
 // ---------- copy ----------
 $('#copyBtn').onclick = async () => {
   const lines = ['Swing Lab results', new Date().toString(), navigator.userAgent, '',
-    `Full swing: ${calib.full || '?'} °/s (${calib.set.full ? 'set' : 'starter'}), full putt: ${calib.puttFull || '?'} °/s (${calib.set.putt ? 'set' : 'starter'}), hook/slice swapped: ${flip}`, '', 'Bag:'];
+    `Full swing: ${calib.full || '?'} °/s (${calib.set.full ? 'set' : 'starter'}), straight reading: ${calib.face0 == null ? 'not set' : calib.face0 + '°'}, full putt: ${calib.puttFull || '?'} °/s (${calib.set.putt ? 'set' : 'starter'}), hook/slice: ${curveMode}${flip ? ', swapped' : ''}`, '', 'Bag:'];
   ORDER.forEach(k => { const l = shots.filter(s => s.club === k); if (!l.length) return;
     const avg = l.reduce((a,s) => a + s.carry, 0) / l.length, miss = l.reduce((a,s) => a + s.side, 0) / l.length;
     lines.push(`${CLUBS[k].name}: ${l.length} shots, avg ${avg.toFixed(1)} m, best ${Math.max(...l.map(s => s.carry))} m, avg miss ${miss.toFixed(1)} m, overswings ${l.filter(s => s.over).length}`); });
   lines.push('', 'Shots (club peak°/s power face° ms):');
-  shots.slice(-60).forEach(s => lines.push(`${s.club} ${Math.round(s.peak)} ${Math.round(s.power*100)}% ${s.face}° ${s.dur}ms${s.over ? ' OVER' : ''}`));
+  shots.slice(-60).forEach(s => lines.push(`${s.club} ${Math.round(s.peak)} ${Math.round(s.power*100)}% face ${s.face}° (raw ${s.faceRaw}°, old ${s.faceOld}°) ${s.dur}ms${s.over ? ' OVER' : ''}`));
   lines.push('', '--- log ---', logEl.textContent.trim().split('\n').slice(-15).join('\n'));
   const text = lines.join('\n');
   try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your chat with Claude.'); }

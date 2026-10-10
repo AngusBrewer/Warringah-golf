@@ -95,7 +95,8 @@ let club = store.get('wgolf-club', 'Dr');
 let full = store.get('wgolf-full', null);       // °/s of your 100% swing, set by calibration
 let puttFull = store.get('wgolf-puttfull', null);
 const FULL_DEFAULT = 1100, PUTT_DEFAULT = 300;  // from your first test session
-let calibrating = null;                          // {mode, peaks: []}
+let face0 = store.get('wgolf-face0', null);      // your 'straight' face reading, from the setup swings
+let calibrating = null;                          // {mode, peaks: [], faces: []}
 const mode = () => club === 'Pt' ? 'putt' : 'full';
 
 setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still practise here.');
@@ -107,7 +108,7 @@ function send(m){ if (conn && conn.open) { try { conn.send(m); } catch {} } }
 function hello(){
   send({t:'status', motion: motionStatus, device});
   send({t:'club', club});
-  send({t:'cal', full: full || FULL_DEFAULT, puttFull: puttFull || PUTT_DEFAULT, set: {full: !!full, putt: !!puttFull}});
+  send({t:'cal', full: full || FULL_DEFAULT, puttFull: puttFull || PUTT_DEFAULT, face0, set: {full: !!full, putt: !!puttFull, face: face0 != null}});
 }
 function link(){
   if (!hostId || typeof Peer === 'undefined') return;
@@ -146,20 +147,21 @@ function calText(){ return calibrating.mode === 'putt'
   : `Take a full, comfortable swing. ${calibrating.peaks.length + 1} of 3.`; }
 $('#calBtn').onclick = () => {
   if (calibrating){ calibrating = null; renderClubs(); setMsg('Setup cancelled.'); send({t:'cal', cancelled: true}); return; }
-  calibrating = {mode: mode(), peaks: []};
+  calibrating = {mode: mode(), peaks: [], faces: []};
   $('#calBtn').textContent = 'Cancel';
-  setMsg(calibrating.mode === 'putt' ? 'Setting your full putt. These 3 strokes set 100% for the putter.' : 'Setting your full swing. These 3 swings set 100% power.');
+  setMsg(calibrating.mode === 'putt' ? 'Setting your full putt. These 3 strokes set 100% for the putter.' : 'Setting your full swing. Swing straight: these 3 set 100% power and what "straight" feels like.');
   send({t:'cal', step: 0, of: 3, mode: calibrating.mode});
   renderClubs(); $('#calBtn').textContent = 'Cancel';
 };
-function calSwing(peak){
-  calibrating.peaks.push(peak);
+function calSwing(peak, faceRaw){
+  calibrating.peaks.push(peak); calibrating.faces.push(faceRaw);
   const n = calibrating.peaks.length;
   send({t:'cal', step: n, of: 3, mode: calibrating.mode, peak: Math.round(peak)});
   if (n < 3){ renderClubs(); $('#calBtn').textContent = 'Cancel'; return; }
   const med = [...calibrating.peaks].sort((a,b) => a-b)[1];
   if (calibrating.mode === 'putt'){ puttFull = Math.round(med); store.set('wgolf-puttfull', puttFull); }
-  else { full = Math.round(med); store.set('wgolf-full', full); }
+  else { full = Math.round(med); store.set('wgolf-full', full);
+    face0 = Math.round([...calibrating.faces].sort((a,b) => a-b)[1]); store.set('wgolf-face0', face0); }
   setMsg(calibrating.mode === 'putt' ? `Full putt set: ${puttFull} °/s.` : `Full swing set: ${full} °/s. A swing like that is 100% power.`);
   toast('Saved');
   calibrating = null; renderClubs(); hello();
@@ -167,7 +169,32 @@ function calSwing(peak){
 
 // ---------- motion ----------
 let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
-let holding = false, active = false, peak = 0, faceAcc = 0, faceAtPeak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
+let holding = false, active = false, peak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
+
+// ---------- face angle ----------
+// From address (pad pressed) we track the phone's full 3D orientation by integrating the gyro.
+// At impact (fastest moment) we rotate the "face" direction of the phone by that orientation,
+// flatten it onto the ground using gravity measured at address, and measure how far it has
+// turned left or right. That is where the clubface points, whatever path the swing took.
+const D2R = Math.PI / 180;
+const qmul = (a, b) => [a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3], a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2], a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1], a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]];
+const qrot = (q, v) => { const r = qmul(qmul(q, [0, v[0], v[1], v[2]]), [q[0], -q[1], -q[2], -q[3]]); return [r[1], r[2], r[3]]; };
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/n, v[1]/n, v[2]/n]; };
+let q = [1, 0, 0, 0], gLP = [0, -9.8, 0], up = [0, 1, 0], faceAxis = [0, 0, 1], gammaSum = 0;
+let faceAtPeak = 0, oldAtPeak = 0;
+function addressNow(){
+  q = [1, 0, 0, 0]; gammaSum = 0; up = norm(gLP);
+  // the face direction is whichever side of the phone (across it, or out of the screen) is flattest at address
+  faceAxis = Math.abs(up[0]) < Math.abs(up[2]) ? [1, 0, 0] : [0, 0, 1];
+}
+function faceNow(){
+  const n0 = faceAxis, n1 = qrot(q, faceAxis);
+  const flat = v => norm([v[0] - up[0]*dot(v, up), v[1] - up[1]*dot(v, up), v[2] - up[2]*dot(v, up)]);
+  const a = flat(n0), b = flat(n1);
+  return Math.atan2(dot(up, cross(a, b)), dot(a, b)) / D2R;
+}
 
 $('#startBtn').onclick = async () => {
   $('#startBtn').disabled = true;
@@ -197,13 +224,18 @@ function onMotion(e){
   rot = Math.hypot(a, b, g);
   if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device}); setMsg(hostId ? 'Pick a club, hold the pad and swing.' : 'Hold the pad and swing. (Not linked to a screen.)'); }
 
-  // Face: how far the phone has rolled around its long side since you pressed the pad (address).
-  if (holding) faceAcc += g * dt;
+  const acc = e.accelerationIncludingGravity;
+  if (acc && acc.x != null && rot < 120) gLP = [gLP[0]*0.8 + acc.x*0.2, gLP[1]*0.8 + acc.y*0.2, gLP[2]*0.8 + acc.z*0.2];
+  if (holding && dt){
+    const w = [b*D2R, g*D2R, a*D2R], wn = Math.hypot(w[0], w[1], w[2]);
+    if (wn){ const h = wn*dt/2, s = Math.sin(h)/wn; q = qmul(q, [Math.cos(h), w[0]*s, w[1]*s, w[2]*s]); const m = Math.hypot(...q); q = q.map(v => v/m); }
+    gammaSum += g * dt;
+  }
 
   const M = MODES[mode()];
-  if (!active && holding && now > coolUntil && rot > M.start){ active = true; peak = rot; faceAtPeak = faceAcc; t0 = now; lowSince = 0; }
+  if (!active && holding && now > coolUntil && rot > M.start){ active = true; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
   if (active){
-    if (rot > peak){ peak = rot; faceAtPeak = faceAcc; }
+    if (rot > peak){ peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; }
     if (rot < M.end){ if (!lowSince) lowSince = now; } else lowSince = 0;
     if ((lowSince && now - lowSince > M.endHold && now - t0 > 120) || now - t0 > 2500) finish(now);
   }
@@ -217,7 +249,7 @@ let pending = null, pendingTimer = 0;
 function finish(now){
   active = false;
   const M = MODES[mode()];
-  if (peak >= M.minPeak && (!pending || peak > pending.peak)) pending = {peak, face: faceAtPeak, dur: now - t0, mode: mode()};
+  if (peak >= M.minPeak && (!pending || peak > pending.peak)) pending = {peak, face: faceAtPeak, old: oldAtPeak, dur: now - t0, mode: mode()};
   if (!pending) return;
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, M.wait);
@@ -225,11 +257,11 @@ function finish(now){
 function shoot(p){
   coolUntil = performance.now() + 600;
   try { navigator.vibrate?.(p.mode === 'putt' ? 25 : 60); } catch {}
-  if (calibrating){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), face: Math.round(p.face), dur: Math.round(p.dur)}); calSwing(p.peak); return; }
+  if (calibrating){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
   const M = MODES[p.mode], top = p.mode === 'putt' ? (puttFull || PUTT_DEFAULT) : (full || FULL_DEFAULT);
   const power = Math.max(0.02, Math.min(1, (p.peak - M.floor) / (top - M.floor)));
   const over = p.mode === 'full' && p.peak > top * 1.15;
-  send({t:'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face))), dur: Math.round(p.dur)});
+  send({t:'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
   $('#lastTag').textContent = 'Last ' + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');
   $('#pw').innerHTML = Math.round(power * 100) + '<small>%</small>';
   $('#padBig').textContent = over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft';
@@ -241,7 +273,7 @@ const pad = $('#pad'); const pointers = new Set();
 function setHold(on){
   if (on === holding) return;
   holding = on; pad.classList.toggle('held', on);
-  if (on){ faceAcc = 0; }
+  if (on) addressNow();
   $('#padBig').textContent = on ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here';
   if (!on && active) finish(performance.now());
   send({t:'m', r: Math.round(rot), h: holding});
