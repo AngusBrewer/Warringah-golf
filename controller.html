@@ -64,7 +64,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
     <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="readB">Read</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
     <section class="pad" id="pad" aria-label="Hold to swing">
       <div class="big" id="padBig">Hold here</div>
-      <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
+      <div class="small" id="padSmall">Hold the pad and swing to hit. Swing without holding for a practice swing.</div>
     </section>
     <div class="foot">
       <div class="result"><div class="tag" id="lastTag">Last swing</div><div class="num" id="pw">–</div></div>
@@ -78,7 +78,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 8;
+const VERSION = 9;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -149,7 +149,7 @@ function renderClubs(){
   $('#clubs').innerHTML = CLUBS.map(([k]) => `<button data-club="${k}" aria-pressed="${k === club}">${k}</button>`).join('');
   $('#clubName').textContent = CLUBS.find(c => c[0] === club)[1] + (club === 'Pt' ? ' · soft stroke, like a real putt' : '');
   $('#calBtn').textContent = club === 'Pt' ? 'Set full putt' : 'Set full swing';
-  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Keep your thumb on the pad and swing.';
+  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Hold the pad and swing to hit. Swing without holding for a practice swing.';
   $('#pad').classList.toggle('cal', !!calibrating);
 }
 $('#clubs').addEventListener('click', e => {
@@ -187,6 +187,7 @@ function calSwing(peak, faceRaw){
 // ---------- motion ----------
 let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
 let holding = false, active = false, peak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
+let practice = false, stillSince = 0, readyUntil = 0;   // swings without holding the pad are practice swings
 
 // ---------- face angle ----------
 // From address (pad pressed) we track the phone's full 3D orientation by integrating the gyro.
@@ -243,14 +244,17 @@ function onMotion(e){
 
   const acc = e.accelerationIncludingGravity;
   if (acc && acc.x != null && rot < 120) gLP = [gLP[0]*0.8 + acc.x*0.2, gLP[1]*0.8 + acc.y*0.2, gLP[2]*0.8 + acc.z*0.2];
-  if (holding && dt){
+  // still for a moment without holding = standing at address for a practice swing
+  if (!holding && !active){ if (rot < 25){ if (!stillSince) stillSince = now; if (now - stillSince > 250) addressNow(); } else if (stillSince && now - stillSince > 300){ readyUntil = now + 2500; stillSince = 0; } else stillSince = 0; }
+  if (dt){
     const w = [b*D2R, g*D2R, a*D2R], wn = Math.hypot(w[0], w[1], w[2]);
     if (wn){ const h = wn*dt/2, s = Math.sin(h)/wn; q = qmul(q, [Math.cos(h), w[0]*s, w[1]*s, w[2]*s]); const m = Math.hypot(...q); q = q.map(v => v/m); }
     gammaSum += g * dt;
   }
 
   const M = MODES[mode()];
-  if (!active && holding && now > coolUntil && rot > M.start){ active = true; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
+  const practiceOk = !holding && !calibrating && now < readyUntil && rot > M.start * 1.3;
+  if (!active && now > coolUntil && ((holding && rot > M.start) || practiceOk)){ active = true; practice = !holding; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
   if (active){
     if (rot > peak){ peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; }
     if (rot < M.end){ if (!lowSince) lowSince = now; } else lowSince = 0;
@@ -266,22 +270,23 @@ let pending = null, pendingTimer = 0;
 function finish(now){
   active = false;
   const M = MODES[mode()];
-  if (peak >= M.minPeak && (!pending || peak > pending.peak)) pending = {peak, face: faceAtPeak, old: oldAtPeak, dur: now - t0, mode: mode()};
+  if (peak >= M.minPeak * (practice ? 1.3 : 1) && (!pending || peak > pending.peak)) pending = {peak, face: faceAtPeak, old: oldAtPeak, dur: now - t0, mode: mode(), practice};
   if (!pending) return;
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, M.wait);
 }
 function shoot(p){
   coolUntil = performance.now() + 600;
-  try { navigator.vibrate?.(p.mode === 'putt' ? 25 : 60); } catch {}
-  if (calibrating){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
+  try { navigator.vibrate?.(p.practice ? 15 : p.mode === 'putt' ? 25 : 60); } catch {}
+  if (calibrating && !p.practice){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
   const M = MODES[p.mode], top = p.mode === 'putt' ? (puttFull || PUTT_DEFAULT) : (full || FULL_DEFAULT);
   const power = Math.max(0.02, Math.min(1, (p.peak - M.floor) / (top - M.floor)));
   const over = p.mode === 'full' && p.peak > top * 1.15;
-  send({t:'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
-  $('#lastTag').textContent = 'Last ' + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');
+  if (p.practice){ readyUntil = performance.now() + 2500; }   // keep rehearsing without a fresh pause
+  send({t: p.practice ? 'practice' : 'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
+  $('#lastTag').textContent = (p.practice ? 'Practice ' : 'Last ') + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');
   $('#pw').innerHTML = Math.round(power * 100) + '<small>%</small>';
-  $('#padBig').textContent = over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft';
+  $('#padBig').textContent = (p.practice ? 'Practice: ' : '') + (over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft');
   setTimeout(() => { $('#padBig').textContent = holding ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here'; }, 1400);
 }
 

@@ -4,12 +4,31 @@
 'use strict';
 const {centroid, rng} = window.GolfGeo;
 const W = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+// treat every colour we write as sRGB (as designed), so vertex-coloured trees and greens aren't washed out
+THREE.ColorManagement.legacyMode = false;
 
+const SUN = new THREE.Vector3(-0.42, 0.78, -0.47).normalize();   // three.js axes: -z is north
 const PAL = {
   off: '#7d8f62', offDots: '#6f8156', rough: '#4f8f3a', roughDots: '#447f33',
-  fairway: '#7cc04a', fairStripe: '#86c955', green: '#8fd65a', fringe: '#6cb846',
+  fairway: '#74b545', fairStripe: '#7fc04f', green: '#7cc84f', fringe: '#62a83f',
   tee: '#83c652', sand: '#ead9a6', sandEdge: '#d9c48a', water: '#3f86c6', waterEdge: '#2f6ea6', ob: '#ffffff'
 };
+
+// fine grass grain on the ground so it doesn't look flat close up (world-space noise, no extra textures)
+function grassDetail(mat){
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+varying vec3 vWP;
+float gh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return mix(mix(gh(i), gh(i+vec2(1,0)), f.x), mix(gh(i+vec2(0,1)), gh(i+vec2(1,1)), f.x), f.y); }`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+{ float d = length(vWP - cameraPosition); float k = 1.0 - smoothstep(25.0, 140.0, d);
+  float n = gn(vWP.xz * 1.7) * 0.55 + gn(vWP.xz * 6.0) * 0.3 + gn(vWP.xz * 0.35) * 0.6;
+  diffuseColor.rgb *= mix(1.0, 0.86 + n * 0.17, k); diffuseColor.rgb *= 0.95 + gn(vWP.xz * 0.05) * 0.1; }`);
+  };
+  return mat;
+}
 
 class GolfScene {
   constructor(canvas, course){
@@ -17,14 +36,18 @@ class GolfScene {
     const r = this.renderer = new THREE.WebGLRenderer({canvas, antialias: true});
     r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     r.outputEncoding = THREE.sRGBEncoding;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05;   // softer, more photographic highlights
     const s = this.scene = new THREE.Scene();
-    s.background = new THREE.Color('#9fd3f5');
-    s.fog = new THREE.Fog('#bfe2f7', 350, 1100);
-    this.camera = new THREE.PerspectiveCamera(48, 1, 0.03, 3000);
-    s.add(new THREE.HemisphereLight('#e8f6ff', '#5a7d3a', 0.75));
-    const sun = new THREE.DirectionalLight('#fff6e0', 0.85); sun.position.set(-300, 500, 200); s.add(sun);
-    this.buildGround(); GolfTrees.build(s, course.trees, (x, y) => this.terrain.height(x, y)); this.buildGreens(); this.buildFlag(); this.buildBall(); this.buildAim();
+    s.background = new THREE.Color('#a9d8f5');
+    s.fog = new THREE.Fog('#cfe6f2', 300, 1400);
+    this.camera = new THREE.PerspectiveCamera(48, 1, 0.03, 4000);
+    s.add(new THREE.HemisphereLight('#e2f0ff', '#5b7444', 0.72));
+    // Sydney afternoon sun: high in the north-west, so shadows fall to the south-east
+    const sun = new THREE.DirectionalLight('#fff1d6', 0.9); sun.position.copy(SUN).multiplyScalar(600); s.add(sun);
+    this.buildSky();
+    this.buildGround(); this.trees = GolfTrees.build(s, course.trees, (x, y) => this.terrain.height(x, y)); this.buildGreens(); this.buildFlag(); this.buildBall(); this.buildAim();
     this.golfer = new GolfGolfer(s);
+    this.ballScale = 2;
     this.camPos = new THREE.Vector3(0, 50, 50); this.camLook = new THREE.Vector3();
     this.camGoalPos = this.camPos.clone(); this.camGoalLook = new THREE.Vector3();
     this.resize();
@@ -61,6 +84,18 @@ class GolfScene {
     // white out-of-bounds line
     g.setLineDash([2*S, 3*S]); g.strokeStyle = PAL.ob; g.lineWidth = 0.6 * S;
     for (const b of d.bounds){ path(b); g.stroke(); } g.setLineDash([]);
+    // tree shadows baked into the ground, cast away from the sun
+    { const sx = -SUN.x / SUN.y, sy = SUN.z / SUN.y;         // ground offset per metre of height (course x, y)
+      // drawn solid on their own layer (so overlapping shadows don't stack), then blurred onto the ground once
+      const sc = document.createElement('canvas'); sc.width = cv.width; sc.height = cv.height; const h = sc.getContext('2d');
+      h.fillStyle = '#000'; h.strokeStyle = '#000'; h.lineWidth = 0.6 * S;
+      h.beginPath();
+      for (const t of c.trees){ const hc = t.base + (t.h - t.base) * 0.45, [px, py] = T(t.x + sx * hc, t.y + sy * hc);
+        h.moveTo(px + t.r * S, py); h.ellipse(px, py, t.r * S, t.r * S * 0.92, 0, 0, Math.PI * 2); }
+      h.fill(); h.beginPath();
+      for (const t of c.trees){ const [tx, ty] = T(t.x + sx * t.base * 0.6, t.y + sy * t.base * 0.6), [bx, by] = T(t.x, t.y); h.moveTo(bx, by); h.lineTo(tx, ty); }
+      h.stroke();
+      g.save(); g.globalAlpha = 0.4; g.filter = 'blur(' + Math.round(1.5 * S) + 'px)'; g.drawImage(sc, 0, 0); g.restore(); }
     this.groundCanvas = cv;
     const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
     tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -69,7 +104,7 @@ class GolfScene {
     { const p = geo.attributes.position, cx = this.gx0 + this.gw/2, cy = this.gy0 + this.gh/2;
       for (let i = 0; i < p.count; i++) p.setY(i, this.terrain.height(p.getX(i) + cx, -p.getZ(i) + cy));
       geo.computeVertexNormals(); }
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({map: tex}));
+    const mesh = new THREE.Mesh(geo, grassDetail(new THREE.MeshLambertMaterial({map: tex})));
     mesh.position.set(this.gx0 + this.gw/2, 0, -(this.gy0 + this.gh/2));
     this.scene.add(mesh);
     // far ground so the horizon isn't empty
@@ -94,19 +129,41 @@ class GolfScene {
     pole.position.y = 1.065; grp.add(pole);
     const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4, 6, 1), new THREE.MeshLambertMaterial({color: '#e23b2e', side: THREE.DoubleSide}));
     cloth.geometry.translate(0.3, 0, 0); cloth.position.set(0, 1.9, 0); grp.add(cloth); this.cloth = cloth;
-    const cup = new THREE.Mesh(new THREE.CircleGeometry(0.054, 24).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#141f14'}));
-    cup.position.y = 0.006; grp.add(cup);
-    const lip = new THREE.Mesh(new THREE.RingGeometry(0.054, 0.062, 24).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#f2f2f2'}));
-    lip.position.y = 0.005; grp.add(lip);
+    // The cup is a real hole: its opening marks the stencil buffer, and the inside wall, the bottom
+    // and a ball dropping in are only drawn through that opening.
+    const R = this.CUP = GolfPhysics.CUP, inStencil = m => Object.assign(m, {stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilZPass: THREE.KeepStencilOp, depthTest: false, depthWrite: false});
+    const open = new THREE.Mesh(new THREE.CircleGeometry(R, 32).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#1d241b', stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp, polygonOffset: true, polygonOffsetFactor: -4}));
+    open.position.y = 0.014; open.renderOrder = -3; grp.add(open);   // drawn first, so the green can't paint over it
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.11, 32, 1, true), inStencil(new THREE.MeshLambertMaterial({color: '#5a5446', side: THREE.BackSide})));
+    wall.position.y = 0.014 - 0.055; wall.renderOrder = -2; grp.add(wall);
+    const liner = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.995, R * 0.995, 0.028, 32, 1, true), inStencil(new THREE.MeshLambertMaterial({color: '#f1efe8', side: THREE.BackSide})));
+    liner.position.y = 0.014 - 0.016; liner.renderOrder = -1; grp.add(liner);
+    const bottom = new THREE.Mesh(new THREE.CircleGeometry(R, 24).rotateX(-Math.PI/2), inStencil(new THREE.MeshBasicMaterial({color: '#3b3a33'})));
+    bottom.position.y = 0.014 - 0.105; bottom.renderOrder = -2; grp.add(bottom);
+    this.cupGlow = new THREE.Mesh(new THREE.RingGeometry(R, R + 0.012, 32).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4}));
+    this.cupGlow.position.y = 0.015; grp.add(this.cupGlow);
     // tall marker so the pin is visible from the tee
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 26, 8, 1, true), new THREE.MeshBasicMaterial({color: '#ffe066', transparent: true, opacity: 0.35, depthWrite: false}));
     beam.position.y = 16; grp.add(beam); this.beam = beam;
     this.scene.add(grp);
   }
+  buildSky(){
+    // soft gradient dome: deep blue overhead, hazy near the horizon
+    const geo = new THREE.SphereGeometry(3000, 32, 16), p = geo.attributes.position, col = [], top = new THREE.Color('#5aa6e6'), mid = new THREE.Color('#a9d4f2'), low = new THREE.Color('#dbeaf0'), c = new THREE.Color();
+    for (let i = 0; i < p.count; i++){ const h = p.getY(i) / 3000; if (h > 0.25) c.copy(mid).lerp(top, Math.min(1, (h - 0.25) / 0.6)); else c.copy(low).lerp(mid, Math.max(0, h / 0.25)); col.push(c.r, c.g, c.b); }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    this.sky = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false}));
+    this.sky.renderOrder = -10; this.scene.add(this.sky);
+  }
   buildBall(){
     // a real golf ball is 42.7 mm across; it only grows when far from the camera so it stays visible
     this.BR = 0.02135;
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(this.BR, 18, 14), new THREE.MeshLambertMaterial({color: '#ffffff', emissive: '#4a4a4a'}));
+    this.ballMat = new THREE.MeshLambertMaterial({color: '#ffffff', emissive: '#5a5a5a'});
+    this.ballCupMat = Object.assign(this.ballMat.clone(), {stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc, stencilZPass: THREE.KeepStencilOp, depthTest: false, depthWrite: false});
+    this.ball = new THREE.Mesh(new THREE.SphereGeometry(this.BR, 20, 16), this.ballMat);
+    // thin dark outline so the ball stands out on light grass (drawn as an inside-out shell)
+    this.ballEdge = new THREE.Mesh(new THREE.SphereGeometry(this.BR * 1.22, 20, 16), new THREE.MeshBasicMaterial({color: '#1c2a18', side: THREE.BackSide, transparent: true, opacity: 0.55}));
+    this.ball.add(this.ballEdge);
     this.shadow = new THREE.Mesh(new THREE.CircleGeometry(this.BR * 1.2, 16).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#000000', transparent: true, opacity: 0.35, depthWrite: false}));
     this.scene.add(this.ball, this.shadow);
     // white trail behind the ball in flight
@@ -126,7 +183,9 @@ class GolfScene {
   setPin(x, y){ this.flag.position.copy(W(x, y, this.ground(x, y))); this.pin = [x, y]; }
   setBall(x, y, h = 0, trail = false){
     const g = this.ground(x, y);
-    this.ball.position.copy(W(x, y, g + h + this.BR)); this.shadow.position.copy(W(x, y, g + 0.004)); this.shadow.scale.setScalar(1 + h * 0.03);
+    this.ballY0 = g + h; this.ball.position.copy(W(x, y, g + h + this.BR * this.ballScale)); this.shadow.position.copy(W(x, y, g + 0.004)); this.shadow.visible = h > -0.01;
+    // dropping into the cup: only visible through the hole
+    const inCup = h < -0.004; if (this.ball.material !== (inCup ? this.ballCupMat : this.ballMat)){ this.ball.material = inCup ? this.ballCupMat : this.ballMat; this.ball.renderOrder = inCup ? 5 : 0; this.ballEdge.visible = !inCup; }
     if (trail){ this.trailPts.push(this.ball.position.clone()); if (this.trailPts.length > 160) this.trailPts.shift(); this.trail.geometry.setFromPoints(this.trailPts); this.trail.visible = true; }
   }
   clearTrail(){ this.trailPts = []; this.trail.visible = false; }
@@ -178,11 +237,14 @@ class GolfScene {
   frame(dt, t){
     const k = 1 - Math.pow(0.0015, dt);
     this.camPos.lerp(this.camGoalPos, k); this.camLook.lerp(this.camGoalLook, k);
-    this.camera.position.copy(this.camPos); this.camera.lookAt(this.camLook);
+    this.camera.position.copy(this.camPos); this.camera.lookAt(this.camLook); this.sky.position.copy(this.camPos); this.trees.update(this.camPos);
     if (this.cloth) this.cloth.rotation.y = Math.sin(t * 2.3) * 0.25;
     const dist = this.camera.position.distanceTo(this.flag.position); this.beam.visible = dist > 60;
     // keep the ball a few pixels wide however far away it is
-    const bd = this.camera.position.distanceTo(this.ball.position); this.ball.scale.setScalar(Math.max(1, bd / 7)); this.shadow.scale.setScalar(Math.max(1, bd / 7));
+    // drawn a bit bigger than real (in proportion to the bigger cup), and never smaller than a few pixels
+    const bd = this.camera.position.distanceTo(this.ball.position); this.ballScale = Math.max(2, bd / 6);
+    this.ball.scale.setScalar(this.ballScale); if (this.ballY0 != null) this.ball.position.y = this.ballY0 + this.BR * this.ballScale;   this.shadow.scale.setScalar(this.ballScale * 1.1);   // ball sits on the ground at any size
+    this.ballEdge.material.opacity = bd < 12 ? 0.55 : 0.25;
     this.golfer.update(dt, t);
     this.renderer.render(this.scene, this.camera);
   }

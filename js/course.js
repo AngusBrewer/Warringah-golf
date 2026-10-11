@@ -73,6 +73,8 @@ class Course {
     const add = (x, y, s) => { if (!this.inBounds(x, y) && s !== 'edge') return;
       if (this.hit(this.greens, x, y, 3) || this.hit(this.tees, x, y, 2) || this.hit(this.bunkers, x, y, 1) || this.hit(this.fairways, x, y, -2) || this.inWater(x, y)) return;
       out.push({x, y, r: 4, h: 15, base: 7}); };   // real kinds and sizes are set by GolfTrees.dress
+    // traced from aerial imagery: [x, y, crown radius, inside the course]
+    if (d.canopy && d.canopy.length){ for (const t of d.canopy) out.push({x: t[0], y: t[1], r: t[2], h: 15, base: 7, traced: true, edge: !t[3]}); return out; }
     for (const t of d.trees || []) add(t[0], t[1]);
     for (const row of d.treeRows || []) for (let i = 2; i < row.length; i += 2){
       const ax = row[i-2], ay = row[i-1], bx = row[i], by = row[i+1], L = Math.hypot(bx-ax, by-ay);

@@ -16,7 +16,9 @@ const ORDER = ['Dr','3W','5i','7i','9i','PW','SW','Pt'];
 // how much of the club's distance you get from each lie
 const LIE_DIST = {tee:1, fairway:1, fringe:0.95, green:1, rough:0.86, bunker:0.62};
 // how far the ball runs after landing, relative to the club's normal roll
-const LIE_ROLL = {tee:1, fairway:1, fringe:0.7, green:0.55, rough:0.3, bunker:0, water:0, ob:0};
+const LIE_ROLL = {tee:1, fairway:1, fringe:0.8, green:0.9, rough:0.3, bunker:0, water:0, ob:0};
+// the cup is drawn a little bigger than real (like Wii golf), so it catches a little more
+const CUP = 0.1;
 const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', rough:'Rough', bunker:'Bunker', water:'Water', ob:'Out of bounds'};
 
 function lieFactor(lie, club){ if (lie === 'bunker' && (club === 'SW' || club === 'PW')) return 0.85; return LIE_DIST[lie] ?? 0.86; }
@@ -55,7 +57,7 @@ function fullShot(course, s){
   if (hitTree){
     events.push('tree');
     // drop out of the tree, kicking back a little
-    const back = 2 + Math.random() * 4;
+    const back = -1 + Math.random() * 4;   // mostly drops straight down, sometimes kicks back
     land = [land[0] - ux*back + (Math.random() - .5)*3, land[1] - uy*back + (Math.random() - .5)*3, 0];
     samples.push([land[0], land[1], 0]);
   }
@@ -66,20 +68,20 @@ function fullShot(course, s){
   const rollTrack = [[land[0], land[1]]];
   let rest = [land[0], land[1]], holed = false;
   if (lie !== 'water' && lie !== 'ob' && lie !== 'bunker'){
-    let remaining = (hitTree ? 1 : carry * C.roll * (LIE_ROLL[lie] ?? 0.3)) * (1 + along * 0.01);
+    let remaining = (hitTree ? 1 : carry * C.roll * (LIE_ROLL[lie] ?? 0.3) + (lie === 'green' ? 1.5 : lie === 'fringe' ? 0.8 : 0)) * (1 + along * 0.01);   // greens release a bit
     let x = land[0], y = land[1];
     while (remaining > 0.05){
       const step = Math.min(0.5, remaining); x += dx * step; y += dy * step;
       const l = course.lie(x, y);
       const g = course.terrain ? course.terrain.grad(x, y) : [0, 0], up = g[0]*dx + g[1]*dy;   // rolls further downhill
       remaining -= step * (l === 'rough' ? 3 : l === 'fringe' ? 1.6 : 1) * Math.max(0.3, 1 + up * 12);
-      if (s.pin && Math.hypot(x - s.pin[0], y - s.pin[1]) < 0.09 && remaining < 2.5){ holed = true; x = s.pin[0]; y = s.pin[1]; lie = 'green'; rollTrack.push([x, y]); break; }
+      if (s.pin && Math.hypot(x - s.pin[0], y - s.pin[1]) < CUP + 0.02 && remaining < 2.5){ holed = true; x = s.pin[0]; y = s.pin[1]; lie = 'green'; rollTrack.push([x, y]); break; }
       rollTrack.push([x, y]); lie = l;
       if (l === 'water' || l === 'ob' || l === 'bunker') break;
     }
     rest = [x, y];
   }
-  if (!holed && s.pin && Math.hypot(rest[0] - s.pin[0], rest[1] - s.pin[1]) < 0.08){ holed = true; rest = s.pin.slice(); }
+  if (!holed && s.pin && Math.hypot(rest[0] - s.pin[0], rest[1] - s.pin[1]) < CUP){ holed = true; rest = s.pin.slice(); }
   return {samples, rollTrack, land, rest, lie, holed, events, carry: Math.hypot(land[0] - s.from[0], land[1] - s.from[1])};
 }
 
@@ -102,8 +104,8 @@ function putt(course, s){
     x += vx * dt; y += vy * dt;
     if (i % 6 === 0) track.push([x, y]);
     const dc = Math.hypot(x - cup[0], y - cup[1]);
-    if (dc < 0.075){
-      if (sp < 1.35){ holed = true; x = cup[0]; y = cup[1]; track.push([x, y]); break; }
+    if (dc < CUP){
+      if (sp < 1.6){ holed = true; x = cup[0]; y = cup[1]; track.push([x, y]); break; }
       if (!lip){ lip = true; vx *= 0.6; vy *= 0.6; const t = Math.random() < 0.5 ? 0.35 : -0.35; const c = Math.cos(t), sn = Math.sin(t); [vx, vy] = [vx*c - vy*sn, vx*sn + vy*c]; }
     }
     lie = course.lie(x, y);
@@ -119,5 +121,5 @@ function dropPoint(course, samples, from){
   return from.slice();
 }
 
-window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, lieFactor, fullShot, putt, dropPoint};
+window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, lieFactor, fullShot, putt, dropPoint};
 })();

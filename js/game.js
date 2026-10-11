@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 8;
+const VERSION = 9;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -68,6 +68,7 @@ function onPhone(m){
     case 'aim': aimHeld = m.on ? (m.d < 0 ? 1 : -1) : 0; break;   // ◀ (d = -1) turns the aim left
     case 'view': toggleMap(); break;
     case 'swing': if (!m.cal) onSwing(m); break;
+    case 'practice': onPractice(m); break;
     case 'm': meter.fromPhone(Number(m.r) || 0, !!m.h); break;
     case 'cal': if (m.full) cal.full = Number(m.full) || cal.full; if (m.puttFull) cal.putt = Number(m.puttFull) || cal.putt; break;
   }
@@ -162,17 +163,31 @@ function faceToSide(face, putt){
   if (!putt && recentFaces.length >= 3){ const s = [...recentFaces].sort((a,b) => a-b); f -= s[s.length >> 1]; }
   if (settings.flip) f = -f;
   if (putt) return Math.max(-6, Math.min(6, f * 0.25)) * k;   // degrees of aim error
-  const eff = Math.sign(f) * Math.max(0, Math.abs(f) - 10);       // ignore the first 10° either way
-  return eff * k;
+  const eff = Math.sign(f) * Math.max(0, Math.abs(f) - 7);        // ignore the first 7° either way
+  return eff * k * 1.2;
 }
 function onSwing(m){
   if (mode !== 'aim') return;
   const putting = club === 'Pt';
   const power = Math.max(0.02, Math.min(1, Number(m.power) || 0));
-  meter.final(m.over ? 1.2 : power);
+  meter.final(m.over ? 1.2 : power); if (m.over && !putting) meter.crazy();
   const face = Number(m.face) || 0;
   if (!putting && !m.putt){ recentFaces.push(face); while (recentFaces.length > 8) recentFaces.shift(); store.set('wgolf-recentface', recentFaces); }
   takeShot(power, faceToSide(face, putting), !!m.over);
+}
+// a swing made without holding the pad: the golfer rehearses off the ball and the bar shows how it went
+function onPractice(m){
+  if (mode !== 'aim') return;
+  const putting = club === 'Pt', power = Math.max(0.02, Math.min(1, Number(m.power) || 0)), over = !!m.over && !putting;
+  meter.final(over ? 1.2 : power); if (over) meter.crazy();
+  const fs = faceToSide(Number(m.face) || 0, putting), C = CLUBS[club];
+  let shape;
+  if (over) shape = 'overswing, could go anywhere';
+  else if (putting) shape = Math.abs(fs) < 1 ? 'on line' : fs > 0 ? 'pushed right' : 'pulled left';
+  else { const side = fs * 0.9 * C.curve * (C.max * power / 100); shape = Math.abs(side) < 3 ? 'straight' : Math.abs(side) < 10 ? (side > 0 ? 'slight fade' : 'slight draw') : (side > 0 ? 'slice' : 'hook'); }
+  const carry = putting ? 20 * power : C.max * Math.pow(power, 0.9) * GolfPhysics.lieFactor(lie, club);
+  toast(`Practice ${putting ? 'putt' : 'swing'}: ${Math.round(power * 100)}% (about ${fmtM(carry)}), ${shape}`, 2600);
+  if (!scene.golfer.anim) scene.golfer.swing(null, true);
 }
 function greenField(p){ return scene.greenAt(p[0], p[1]) || scene.fields[hole.green]; }
 function takeShot(power, faceSide, over){
@@ -190,7 +205,8 @@ function launch(power, faceSide, over){
   }
   const C = CLUBS[club];
   let side = faceSide * 0.9 * C.curve * (C.max * power / 100);
-  if (over) side += (Math.random() * 2 - 1) * 16 * C.curve * power + (Math.random() < .5 ? -6 : 6);
+  // overswing: the bar goes haywire and it's a coin flip whether it slices right or hooks left
+  if (over){ const dir = Math.random() < 0.5 ? -1 : 1; side = dir * (0.1 + Math.random() * 0.07) * C.max * power * Math.max(0.5, C.curve); banner(dir > 0 ? 'Overswing! Big slice.' : 'Overswing! Big hook.'); }
   const r = GolfPhysics.fullShot(course, {from: ball, ang: aim, club, power, lie, wind: windV, side, pin});
   animateFlight(r);
 }
@@ -200,6 +216,11 @@ let anim = null;
 function animateFlight(r){
   const dur = 1.6 + r.carry / 110, rollDur = Math.min(2.5, 0.4 + r.rollTrack.length * 0.012);
   anim = {kind: 'flight', r, t0: performance.now(), dur, rollDur};
+}
+function startDrop(prev, done){
+  const dx = pin[0] - prev[0], dy = pin[1] - prev[1], L = Math.hypot(dx, dy) || 1, R = GolfPhysics.CUP * 0.45;
+  const from = [pin[0] - dx / L * GolfPhysics.CUP * 0.9, pin[1] - dy / L * GolfPhysics.CUP * 0.9], to = [pin[0] + dx / L * R + dy / L * 0.03, pin[1] + dy / L * R - dx / L * 0.03];
+  anim = {kind: 'drop', from, to, done, t0: performance.now()};
 }
 function animatePutt(r){ anim = {kind: 'putt', r, t0: performance.now(), dur: Math.min(6, 0.6 + r.track.length * 0.05)}; }
 function stepAnim(now){
@@ -218,18 +239,26 @@ function stepAnim(now){
       const f = 1 - Math.pow(1 - rt / rollDur, 2), p = R[Math.min(R.length - 1, Math.floor(f * (R.length - 1)))];
       scene.setBall(p[0], p[1]); scene.view('watch', {ball: p}); return;
     }
+    if (r.holed) return startDrop(R.length > 1 ? R[R.length - 2] : ball, () => finishShot(r.rest, r.lie, r.holed, [], r.events));
     anim = null; finishShot(r.rest, r.lie, r.holed, r.samples.concat(r.rollTrack.map(p => [p[0], p[1], 0])), r.events);
-  } else {
+  } else if (anim.kind === 'putt'){
     const {r, dur} = anim, T = r.track;
     if (t < dur){ const f = 1 - Math.pow(1 - t / dur, 2.2), p = T[Math.min(T.length - 1, Math.floor(f * (T.length - 1)))];
       scene.setBall(p[0], p[1]); scene.view('address', {ball: [p[0] - Math.cos(aim)*0.01, p[1] - Math.sin(aim)*0.01], ang: aim, putt: true, toPin: dist(p, pin)}); return; }
+    if (r.holed) return startDrop(T.length > 2 ? T[T.length - 3] : ball, () => finishShot(r.rest, r.lie, r.holed, [], []));
     anim = null; finishShot(r.rest, r.lie, r.holed, T.map(p => [p[0], p[1], 0]), r.lip ? ['lip'] : []);
+  } else if (anim.kind === 'drop'){
+    // roll over the lip toward the far side of the cup, then fall to the bottom
+    const {from, to, done} = anim, k = Math.min(1, t / 0.42), e = k * k;
+    const x = from[0] + (to[0] - from[0]) * Math.min(1, k * 1.6), y = from[1] + (to[1] - from[1]) * Math.min(1, k * 1.6);
+    scene.setBall(x, y, -0.105 * e);
+    if (k >= 1){ anim = null; done(); }
   }
 }
 
 function finishShot(rest, newLie, holed, track, events){
   mode = 'result';
-  if (holed){ ball = pin.slice(); scene.setBall(ball[0], ball[1]); return holeOut(); }
+  if (holed){ ball = pin.slice(); return holeOut(); }   // the ball stays at the bottom of the cup
   let msg = '';
   if (newLie === 'ob'){ strokes++; ball = lastPos.slice(); lie = course.lie(ball[0], ball[1]); msg = 'Out of bounds. One-stroke penalty, play again.'; }
   else if (newLie === 'water'){ strokes++; ball = GolfPhysics.dropPoint(course, track, lastPos); lie = course.lie(ball[0], ball[1]); if (lie === 'water' || lie === 'ob'){ ball = lastPos.slice(); lie = course.lie(ball[0], ball[1]); } msg = 'In the water. One-stroke penalty, dropping out.'; }
@@ -270,16 +299,19 @@ const meter = {
     $('#mPeak').style.bottom = this.scale(this.peak) + '%'; $('#mPeak').style.opacity = this.peak > 0.05 ? 1 : 0;
     $('#mLab').style.color = p > 1.15 ? '#b3372b' : ''; },
   reset(){ this.peak = 0; this.draw(0); },
-  live(p){ this.peak = Math.max(this.peak, p); this.draw(p); },
+  live(p){ this.peak = Math.max(this.peak, p); this.draw(p); if (p > 1.15 && club !== 'Pt' && !$('#meter').classList.contains('crazy')) this.crazy(); },
   fromPhone(r, held){
     if (mode !== 'aim') return;
     if (held && !this.held) this.peak = 0;
     this.held = held;
     const putt = club === 'Pt', chip = ['9i', 'PW', 'SW'].includes(club);
     const floor = putt ? 30 : chip ? 60 : 150, top = putt ? cal.putt : cal.full;
-    if (held) this.live(Math.max(0, (r - floor) / (top - floor)));
+    // fills while holding (a real swing) and also for practice swings without holding
+    const p = Math.max(0, (r - floor) / (top - floor));
+    if (held || p > 0.02){ if (!this.live_ || performance.now() - this.lastLive > 900) this.peak = 0; this.live_ = true; this.lastLive = performance.now(); this.live(p); }
   },
   final(p){ this.peak = Math.max(this.peak, p); this.draw(p, true); },
+  crazy(){ const el = $('#meter'); el.classList.remove('crazy'); void el.offsetWidth; el.classList.add('crazy'); clearTimeout(this.cz); this.cz = window.setTimeout(() => el.classList.remove('crazy'), 1600); },
   pinTick(){   // where the bar needs to reach to get to the pin
     const t = $('#mPin'); if (!hole || mode !== 'aim'){ t.style.display = 'none'; return; }
     const C = CLUBS[club], d = playsLike();
@@ -313,7 +345,7 @@ function updateHUD(){
     const reach = C.putt ? Math.min(d, 20) : C.max * GolfPhysics.lieFactor(lie, club);
     scene.showAim(ball, aim, C.putt ? Math.min(d + 0.5, 20) : Math.min(reach, Math.max(reach * 0.5, d)), C.putt);
   }
-  $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Hold the pad and putt.' : 'Hold the pad and swing.') : 'Link your phone, or hold Space to swing.') : '';
+  $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Hold the pad and putt. Putt without holding to practise.' : 'Hold the pad and swing. Swing without holding to practise.') : 'Link your phone, or hold Space to swing.') : '';
   drawMini();
 }
 function showScorecard(final){
@@ -416,5 +448,5 @@ initMenu();
 startPeer(store.get('wgolf-screen-id', null) || ('wgolf-' + rnd(6)));
 requestAnimationFrame(loop);
 // for automated tests
-window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound};
+window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, get scene(){ return scene; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound};
 })();

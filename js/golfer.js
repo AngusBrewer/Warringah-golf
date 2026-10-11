@@ -3,7 +3,7 @@
 (function(){
 'use strict';
 const mat = c => new THREE.MeshLambertMaterial({color: c});
-const SKIN = '#f2c7a0', SHIRT = '#2e7fd6', PANTS = '#2f3440', HAIR = '#3b2a1e', SHOE = '#f4f4f4', CAP = '#ffffff';
+const SKIN = '#f2c7a0', SHIRT = '#3d97e6', PANTS = '#5b6576', HAIR = '#3b2a1e', SHOE = '#f4f4f4', CAP = '#ffffff';
 
 function limb(len, r, m){ const g = new THREE.CylinderGeometry(r, r * 0.9, len, 10); g.translate(0, -len / 2, 0); return new THREE.Mesh(g, m); }
 
@@ -50,7 +50,7 @@ class Golfer {
     const off = putt ? 0.62 : 0.78;
     // stand on the left side of the ball line, facing it (right-handed)
     this.root.position.set(ballThree.x - rx * off, ballThree.y - 0.02, ballThree.z + ry * off);
-    this.root.rotation.y = ang - Math.PI / 2;
+    this.root.rotation.y = ang - Math.PI / 2; this.home = this.root.position.clone(); this.ang = ang;
     this.putter = putt; this.setClub(putt);
     if (!this.anim) this.pose(0);
   }
@@ -64,7 +64,12 @@ class Golfer {
     this.spine.rotation.x = this.putter ? 0 : sw * 0.05;
     this.club.rotation.x = this.putter ? 0 : (p < 0 ? p * 1.1 : p * 0.9);   // wrist hinge
   }
-  swing(onImpact){ this.anim = {t: 0, onImpact, hit: false}; }
+  // practice: steps back off the ball (away from the target) and swings at nothing
+  swing(onImpact, practice){
+    if (this.anim && this.anim.practice && this.home) this.root.position.copy(this.home);
+    this.anim = {t: 0, onImpact, hit: false, practice: !!practice};
+    if (practice && this.home){ this.root.position.x -= Math.cos(this.ang) * 0.55; this.root.position.z += Math.sin(this.ang) * 0.55; }
+  }
   update(dt, time){
     if (!this.anim){ // little waggle while waiting
       this.pose(Math.sin(time * 1.7) * 0.015); return; }
@@ -75,7 +80,7 @@ class Golfer {
     else if (a.t < back + down){ const k = (a.t - back) / down; p = -1 + k * k * 1.0; }
     else { if (!a.hit){ a.hit = true; if (a.onImpact) a.onImpact(); } const k = Math.min(1, (a.t - back - down) / fin); p = Math.sin(k * Math.PI / 2); }
     this.pose(p);
-    if (a.t > back + down + fin + 0.6) this.anim = null;
+    if (a.t > back + down + fin + (a.practice ? 0.2 : 0.6)){ if (a.practice && this.home) this.root.position.copy(this.home); this.anim = null; }
   }
   set visible(v){ this.root.visible = v; }
 }
