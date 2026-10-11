@@ -9,17 +9,20 @@ function merge(parts){
   if (LO) parts = parts.filter((p, i) => !p.g.userData.keepNormals || i % 2 === 0);
   parts = parts.map(p => { const g = p.g.index ? p.g.toNonIndexed() : p.g; g.userData.keepNormals = p.g.userData.keepNormals; return Object.assign({}, p, {g}); });
   let n = 0; for (const p of parts) n += p.g.attributes.position.count;
-  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3), uv = new Float32Array(n * 2).fill(0.02);
+  // leaf clumps carry texture coordinates into the leaf texture; everything else samples its solid corner
   let o = 0; const c = new THREE.Color();
   for (const p of parts){
     const g = p.g; if (!g.userData.keepNormals) g.computeVertexNormals();
     const P = g.attributes.position.array, N = g.attributes.normal.array, k = P.length / 3;
     pos.set(P, o * 3); nor.set(N, o * 3);
+    if (g.userData.leafy && !LO) uv.set(g.attributes.uv.array, o * 2); else for (let i = 0; i < k; i++) uv[(o+i)*2+1] = 0.98;
     for (let i = 0; i < k; i++){ c.set(p.c); if (p.shade){ const s = p.shade(P[i*3], P[i*3+1], P[i*3+2]); c.multiplyScalar(s); } col[(o+i)*3] = c.r; col[(o+i)*3+1] = c.g; col[(o+i)*3+2] = c.b; }
     o += k;
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return out;
 }
 // lumpy leaf clump. Normals point out from the whole crown's centre (cx, cy, cz), so a crown
@@ -29,7 +32,7 @@ let LO = false;
 function clump(r, x, y, z, sy, seed, ctr){
   if (LO) r *= 1.3;
   const g = new THREE.IcosahedronGeometry(r, LO ? 0 : 1), p = g.attributes.position, R = rng(seed);
-  const nor = new Float32Array(p.count * 3), seen = new Map();
+  const nor = new Float32Array(p.count * 3), uvs = new Float32Array(p.count * 2), seen = new Map();
   for (let i = 0; i < p.count; i++){
     const key = p.getX(i).toFixed(4) + ',' + p.getY(i).toFixed(4) + ',' + p.getZ(i).toFixed(4);
     if (!seen.has(key)) seen.set(key, 0.72 + R() * 0.5);            // same jitter for shared corners, so no cracks
@@ -40,8 +43,11 @@ function clump(r, x, y, z, sy, seed, ctr){
       nx = 0.82 * ox / ol + 0.18 * lx / ll; ny = 0.82 * oy / ol + 0.18 * ly / ll; nz = 0.82 * oz / ol + 0.18 * lz / ll; }
     const l = Math.hypot(nx, ny, nz) || 1; nor[i*3] = nx / l; nor[i*3+1] = ny / l; nor[i*3+2] = nz / l;
     p.setXYZ(i, px, py, pz);
+    // wrap the leaf texture round the clump (two repeats around, one and a half top to bottom)
+    const ll = Math.hypot(lx, ly, lz) || 1; uvs[i*2] = (Math.atan2(lz, lx) / (2 * Math.PI) + 0.5) * 2 + R() * 0.0; uvs[i*2+1] = (Math.asin(ly / ll) / Math.PI + 0.5) * 1.5 + (seed % 7) * 0.13;
   }
-  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.userData.keepNormals = true;
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.userData.keepNormals = true; g.userData.leafy = true;
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   return g;
 }
 function trunk(h, r0, r1, lean = 0, x = 0, z = 0){
@@ -134,11 +140,25 @@ function dress(trees){
   }
   return trees;
 }
+// Leaves: a tile of small leaf shapes on a transparent background, in shades of grey so each tree's
+// own colour tints it. Cut out with alphaTest, a crown gets a ragged, see-through edge instead of a
+// faceted blob. The top-left corner is solid white for trunks and branches.
+function leafTexture(){
+  const S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S; const g = cv.getContext('2d'), R = rng(311);
+  for (let i = 0; i < 2600; i++){
+    const x = R() * S, y = R() * S, a = R() * Math.PI, l = 3 + R() * 6, w = 1.3 + R() * 2.2, v = Math.round(150 + R() * 105);
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]){ g.beginPath(); g.ellipse(x + dx, y + dy, l, w, a, 0, Math.PI * 2); g.fill(); }
+  }
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 32, 32);
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+  return t;
+}
 // Trees are grouped into 200 m tiles. Near the camera a tile uses the detailed trees; further away
 // a coarse version, so thousands of trees stay cheap to draw. Call update(camera position) each frame.
 function build(scene, trees, ground){
   ground = ground || (() => 0);
-  const mat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide});
+  const mat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: leafTexture(), alphaTest: 0.5});
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const V = 3, TILE = 200, geos = {};
   for (const k in KINDS) for (let v = 0; v < V; v++){ const seed = 100 + v * 17 + k.length;

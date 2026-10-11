@@ -10,15 +10,17 @@ const CLUBS = {
   '9i': {name:'9 iron',       max:125, apex:27, roll:0.04, curve:0.5,  wind:0.75},
   PW: {name:'Pitching wedge', max:105, apex:28, roll:0.03, curve:0.4,  wind:0.7},
   SW: {name:'Sand wedge',     max:80,  apex:24, roll:0.02, curve:0.35, wind:0.6},
-  Pt: {name:'Putter',         max:20,  apex:0,  roll:0,    curve:0,    wind:0, putt:true}
+  Pt: {name:'Putter',         max:24,  apex:0,  roll:0,    curve:0,    wind:0, putt:true}
 };
 const ORDER = ['Dr','3W','5i','7i','9i','PW','SW','Pt'];
 // how much of the club's distance you get from each lie
 const LIE_DIST = {tee:1, fairway:1, fringe:0.95, green:1, rough:0.86, bunker:0.62};
 // how far the ball runs after landing, relative to the club's normal roll
-const LIE_ROLL = {tee:1, fairway:1, fringe:0.8, green:0.9, rough:0.3, bunker:0, water:0, ob:0};
+const LIE_ROLL = {tee:1, fairway:1, fringe:0.9, green:1.15, rough:0.3, bunker:0, water:0, ob:0};
 // the cup is drawn a little bigger than real (like Wii golf), so it catches a little more
-const CUP = 0.1;
+const CUP = 0.12;
+// a full putting stroke rolls this far on a flat green
+const PUTT_MAX = 24;
 const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', rough:'Rough', bunker:'Bunker', water:'Water', ob:'Out of bounds'};
 
 function lieFactor(lie, club){ if (lie === 'bunker' && (club === 'SW' || club === 'PW')) return 0.85; return LIE_DIST[lie] ?? 0.86; }
@@ -37,27 +39,48 @@ function fullShot(course, s){
   const H = course.terrain ? (x, y) => course.terrain.height(x, y) : () => 0, z0 = H(s.from[0], s.from[1]);
   const pos = t => { const a = carry * t, sd = curve * t * t + drift * t, x = s.from[0] + ux*a + rx*sd, y = s.from[1] + uy*a + ry*sd;
     return [x, y, z0 + apex * 4 * t * (1 - t) - H(x, y)]; };          // [x, y, height above the ground there]
-  const samples = [], luck = new Map(); let hitTree = null, endT = 1;
+  const samples = [], seen = new Set(); let hitTree = null, leaves = 0, dropped = null;
   const N = Math.max(40, Math.round(carry / 2));
+  // Like Wii golf, leaves don't stop the ball: it crashes through, losing speed, and drops out
+  // the other side. Only a trunk (or the dense middle of a crown, now and then) knocks it back.
+  const T = Math.sqrt(8 * Math.max(apex, 1) / 9.81), dt = T / N;   // flight time, and time per sample
   for (let i = 0; i <= N * 1.8; i++){
     const t = i / N; let p = pos(t);
     if (t > 0.3 && p[2] <= 0){ p[2] = 0; samples.push(p); break; }     // touched down
     samples.push(p);
     if (i > 2 && p[2] < 32){
-      for (const tr of course.treesNear(p[0], p[1])){
-        const h = GolfTrees.hits(tr, p[0], p[1], p[2]); if (!h) continue;
-        if (h === 'outer'){ if (!luck.has(tr)) luck.set(tr, Math.random() < 0.35); if (!luck.get(tr)) continue; }   // one roll of the dice per tree
-        hitTree = tr; endT = t; break;
+      let hit = null;
+      for (const tr of course.treesNear(p[0], p[1])){ if (seen.has(tr)) continue; const h = GolfTrees.hits(tr, p[0], p[1], p[2]); if (h){ hit = [tr, h]; break; } }
+      if (hit){
+        const [tr, h] = hit; seen.add(tr);
+        const trunk = p[2] < tr.base;
+        if (trunk || (h === 'inner' && Math.random() < 0.18)){ hitTree = tr; break; }
+        // through the leaves: carry on from here, slowed, falling
+        leaves++; dropped = {t, p, vz: 4 * apex * (1 - 2 * t) / T, keep: h === 'inner' ? 0.3 + Math.random() * 0.2 : 0.5 + Math.random() * 0.2};
+        break;
       }
     }
-    if (hitTree) break;
+  }
+  if (dropped){
+    // horizontal speed along the shot, plus any sideways drift, scaled down by the leaves
+    const q = pos(dropped.t + 1 / N), vx0 = (q[0] - dropped.p[0]) / dt, vy0 = (q[1] - dropped.p[1]) / dt;
+    let vx = vx0 * dropped.keep, vy = vy0 * dropped.keep, vz = Math.min(0, dropped.vz) * 0.4, x = dropped.p[0], y = dropped.p[1], z = dropped.p[2] + H(x, y);
+    for (let k = 0; k < 400; k++){
+      x += vx * dt; y += vy * dt; z += vz * dt; vz -= 9.81 * dt;
+      // another tree on the way down slows it again (once each)
+      const above = z - H(x, y);
+      for (const tr of course.treesNear(x, y)){ if (seen.has(tr)) continue; const h = GolfTrees.hits(tr, x, y, above); if (h && above >= tr.base){ seen.add(tr); leaves++; vx *= 0.55; vy *= 0.55; } }
+      if (above <= 0){ samples.push([x, y, 0]); break; }
+      samples.push([x, y, above]);
+    }
   }
   let land = samples[samples.length - 1];
   const events = [];
+  if (leaves) events.push('leaves');
   if (hitTree){
     events.push('tree');
-    // drop out of the tree, kicking back a little
-    const back = -1 + Math.random() * 4;   // mostly drops straight down, sometimes kicks back
+    // off the trunk: drops nearly straight down, sometimes kicking back
+    const back = -1 + Math.random() * 4;
     land = [land[0] - ux*back + (Math.random() - .5)*3, land[1] - uy*back + (Math.random() - .5)*3, 0];
     samples.push([land[0], land[1], 0]);
   }
@@ -68,7 +91,7 @@ function fullShot(course, s){
   const rollTrack = [[land[0], land[1]]];
   let rest = [land[0], land[1]], holed = false;
   if (lie !== 'water' && lie !== 'ob' && lie !== 'bunker'){
-    let remaining = (hitTree ? 1 : carry * C.roll * (LIE_ROLL[lie] ?? 0.3) + (lie === 'green' ? 1.5 : lie === 'fringe' ? 0.8 : 0)) * (1 + along * 0.01);   // greens release a bit
+    let remaining = (hitTree ? 1 : leaves ? 1.5 + Math.random() * 2 : carry * C.roll * (LIE_ROLL[lie] ?? 0.3) + (lie === 'green' ? 2.5 : lie === 'fringe' ? 1.2 : 0)) * (1 + along * 0.01);   // greens release a bit
     let x = land[0], y = land[1];
     while (remaining > 0.05){
       const step = Math.min(0.5, remaining); x += dx * step; y += dy * step;
@@ -87,8 +110,8 @@ function fullShot(course, s){
 
 // Putt. s.field (optional) is the green's slope surface; works from the fringe and rough too.
 function putt(course, s){
-  const ang = s.ang, D = Math.max(0.3, 20 * s.power * (s.max ? s.max / 20 : 1));
-  const decel = 0.55, cup = s.pin;
+  const ang = s.ang, D = Math.max(0.3, PUTT_MAX * s.power);
+  const decel = 0.45, cup = s.pin;   // quick greens: the ball keeps rolling and takes the break
   let v = Math.sqrt(2 * decel * D), vx = Math.cos(ang) * v, vy = Math.sin(ang) * v;
   let x = s.from[0], y = s.from[1], holed = false, lie = 'green', lip = false;
   const track = [[x, y]], dt = 1/120;
@@ -121,5 +144,5 @@ function dropPoint(course, samples, from){
   return from.slice();
 }
 
-window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, lieFactor, fullShot, putt, dropPoint};
+window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, PUTT_MAX, lieFactor, fullShot, putt, dropPoint};
 })();

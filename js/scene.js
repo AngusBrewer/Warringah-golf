@@ -9,13 +9,14 @@ THREE.ColorManagement.legacyMode = false;
 
 const SUN = new THREE.Vector3(-0.42, 0.78, -0.47).normalize();   // three.js axes: -z is north
 const PAL = {
-  off: '#7d8f62', offDots: '#6f8156', rough: '#4f8f3a', roughDots: '#447f33',
-  fairway: '#74b545', fairStripe: '#7fc04f', green: '#7cc84f', fringe: '#62a83f',
-  tee: '#83c652', sand: '#ead9a6', sandEdge: '#d9c48a', water: '#3f86c6', waterEdge: '#2f6ea6', ob: '#ffffff'
+  off: '#5d7244', offDots: '#54683c', rough: '#3e7a2b', roughDots: '#366d25',
+  fairway: '#4e9234', fairStripe: '#58a03b', green: '#3d892c', fringe: '#387d29',
+  tee: '#55983a', sand: '#e6d5a3', sandEdge: '#cdb987', water: '#3a7fb8', waterEdge: '#2b6593', ob: '#ffffff'
 };
 
 // fine grass grain on the ground so it doesn't look flat close up (world-space noise, no extra textures)
-function grassDetail(mat){
+function grassDetail(mat, fine){
+  mat.customProgramCacheKey = () => 'grass' + (fine ? 'fine' : '');
   mat.onBeforeCompile = sh => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
@@ -25,7 +26,11 @@ float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
       .replace('#include <map_fragment>', `#include <map_fragment>
 { float d = length(vWP - cameraPosition); float k = 1.0 - smoothstep(25.0, 140.0, d);
   float n = gn(vWP.xz * 1.7) * 0.55 + gn(vWP.xz * 6.0) * 0.3 + gn(vWP.xz * 0.35) * 0.6;
-  diffuseColor.rgb *= mix(1.0, 0.86 + n * 0.17, k); diffuseColor.rgb *= 0.95 + gn(vWP.xz * 0.05) * 0.1; }`);
+  diffuseColor.rgb *= mix(1.0, 0.86 + n * 0.17, k); diffuseColor.rgb *= 0.95 + gn(vWP.xz * 0.05) * 0.1;
+  ${fine ? `// close-cut putting surface: a fine, even grain like real bentgrass
+  float kf = 1.0 - smoothstep(3.0, 30.0, d);
+  float f2 = gn(vWP.xz * 31.0) * 0.55 + gn(vWP.xz * 11.0) * 0.45;
+  diffuseColor.rgb *= mix(1.0, 0.9 + f2 * 0.16, kf);` : ''} }`);
   };
   return mat;
 }
@@ -36,14 +41,14 @@ class GolfScene {
     const r = this.renderer = new THREE.WebGLRenderer({canvas, antialias: true});
     r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     r.outputEncoding = THREE.sRGBEncoding;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05;   // softer, more photographic highlights
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.78;   // softer, more photographic highlights
     const s = this.scene = new THREE.Scene();
     s.background = new THREE.Color('#a9d8f5');
     s.fog = new THREE.Fog('#cfe6f2', 300, 1400);
     this.camera = new THREE.PerspectiveCamera(48, 1, 0.03, 4000);
-    s.add(new THREE.HemisphereLight('#e2f0ff', '#5b7444', 0.72));
+    s.add(new THREE.HemisphereLight('#e2f0ff', '#5b7444', 0.62));
     // Sydney afternoon sun: high in the north-west, so shadows fall to the south-east
-    const sun = new THREE.DirectionalLight('#fff1d6', 0.9); sun.position.copy(SUN).multiplyScalar(600); s.add(sun);
+    const sun = new THREE.DirectionalLight('#fff1d6', 0.95); sun.position.copy(SUN).multiplyScalar(600); s.add(sun);
     this.buildSky();
     this.buildGround(); this.trees = GolfTrees.build(s, course.trees, (x, y) => this.terrain.height(x, y)); this.buildGreens(); this.buildFlag(); this.buildBall(); this.buildAim();
     this.golfer = new GolfGolfer(s);
@@ -148,11 +153,24 @@ class GolfScene {
     this.scene.add(grp);
   }
   buildSky(){
-    // soft gradient dome: deep blue overhead, hazy near the horizon
-    const geo = new THREE.SphereGeometry(3000, 32, 16), p = geo.attributes.position, col = [], top = new THREE.Color('#5aa6e6'), mid = new THREE.Color('#a9d4f2'), low = new THREE.Color('#dbeaf0'), c = new THREE.Color();
-    for (let i = 0; i < p.count; i++){ const h = p.getY(i) / 3000; if (h > 0.25) c.copy(mid).lerp(top, Math.min(1, (h - 0.25) / 0.6)); else c.copy(low).lerp(mid, Math.max(0, h / 0.25)); col.push(c.r, c.g, c.b); }
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    this.sky = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false}));
+    // painted sky dome: deep blue overhead, hazy near the horizon, with soft fair-weather clouds
+    const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 1024; const g = cv.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, cv.height / 2);
+    grad.addColorStop(0, '#3f8fd8'); grad.addColorStop(0.55, '#7db8e8'); grad.addColorStop(0.9, '#c9e1f1'); grad.addColorStop(1, '#e4eef2');
+    g.fillStyle = grad; g.fillRect(0, 0, cv.width, cv.height / 2); g.fillStyle = '#e4eef2'; g.fillRect(0, cv.height / 2, cv.width, cv.height / 2);
+    const R = rng(77);
+    for (let i = 0; i < 70; i++){
+      // clouds sit between about 5° and 40° above the horizon, flatter and smaller further away
+      const e = 0.06 + Math.pow(R(), 1.6) * 0.38, y = cv.height / 2 - e * cv.height, x = R() * cv.width, w = (40 + R() * 160) * (0.5 + e * 2.2), h = w * (0.22 + R() * 0.12);
+      for (let k = 0; k < 7; k++){
+        const cx = x + (R() - 0.5) * w * 1.2, cy = y + (R() - 0.6) * h, r = w * (0.25 + R() * 0.3);
+        for (const dx of [0, cv.width, -cv.width]){
+          const rg = g.createRadialGradient(cx + dx, cy, 0, cx + dx, cy, r); rg.addColorStop(0, 'rgba(255,255,255,0.55)'); rg.addColorStop(0.6, 'rgba(250,252,255,0.25)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+          g.fillStyle = rg; g.save(); g.translate(cx + dx, cy); g.scale(1, h / r * 1.4); g.translate(-(cx + dx), -cy); g.beginPath(); g.arc(cx + dx, cy, r, 0, Math.PI * 2); g.fill(); g.restore(); }
+      }
+    }
+    const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(3000, 48, 24), new THREE.MeshBasicMaterial({map: tex, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false}));
     this.sky.renderOrder = -10; this.scene.add(this.sky);
   }
   buildBall(){
@@ -194,7 +212,7 @@ class GolfScene {
     this.fields = []; this.reads = [];
     this.course.d.greens.forEach((poly, i) => {
       const f = new GolfGreens.GreenField(poly, 900 + i * 31, (x, y) => this.terrain.height(x, y)); this.fields.push(f);
-      const mesh = GolfGreens.greenMesh(f, W); this.scene.add(mesh);
+      const mesh = GolfGreens.greenMesh(f, W); grassDetail(mesh.material, true); this.scene.add(mesh);
       const read = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2}));
       read.visible = false; read.userData = mesh.userData; read.renderOrder = 2; this.scene.add(read); this.reads.push(read);
     });

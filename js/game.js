@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 9;
+const VERSION = 10;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -185,7 +185,7 @@ function onPractice(m){
   if (over) shape = 'overswing, could go anywhere';
   else if (putting) shape = Math.abs(fs) < 1 ? 'on line' : fs > 0 ? 'pushed right' : 'pulled left';
   else { const side = fs * 0.9 * C.curve * (C.max * power / 100); shape = Math.abs(side) < 3 ? 'straight' : Math.abs(side) < 10 ? (side > 0 ? 'slight fade' : 'slight draw') : (side > 0 ? 'slice' : 'hook'); }
-  const carry = putting ? 20 * power : C.max * Math.pow(power, 0.9) * GolfPhysics.lieFactor(lie, club);
+  const carry = putting ? GolfPhysics.PUTT_MAX * power : C.max * Math.pow(power, 0.9) * GolfPhysics.lieFactor(lie, club);
   toast(`Practice ${putting ? 'putt' : 'swing'}: ${Math.round(power * 100)}% (about ${fmtM(carry)}), ${shape}`, 2600);
   if (!scene.golfer.anim) scene.golfer.swing(null, true);
 }
@@ -266,6 +266,7 @@ function finishShot(rest, newLie, holed, track, events){
   if (!msg){
     const d = dist(ball, pin);
     if (events.includes('tree')) msg = 'Hit a tree! ';
+    else if (events.includes('leaves')) msg = 'Clipped the leaves! ';
     else if (events.includes('lip')) msg = 'Lipped out! ';
     msg += lie === 'green' ? `On the green, ${fmtM(d)} away.` : lie === 'bunker' ? 'In the bunker.' : lie === 'rough' ? `In the rough, ${fmtM(d)} to go.` : lie === 'fringe' ? `On the fringe, ${fmtM(d)}.` : `${LIE_NAME[lie]}, ${fmtM(d)} to go.`;
     if (club === 'Pt' && d < 0.35){ msg = 'Tap-in.'; strokes++; ball = pin.slice(); scene.setBall(ball[0], ball[1]); banner(msg); return later(holeOut, 900); }
@@ -315,7 +316,7 @@ const meter = {
   pinTick(){   // where the bar needs to reach to get to the pin
     const t = $('#mPin'); if (!hole || mode !== 'aim'){ t.style.display = 'none'; return; }
     const C = CLUBS[club], d = playsLike();
-    const need = C.putt ? d / 20 : Math.pow(Math.min(1.3, d / (C.max * GolfPhysics.lieFactor(lie, club))), 1 / 0.9);
+    const need = C.putt ? d / GolfPhysics.PUTT_MAX : Math.pow(Math.min(1.3, d / (C.max * GolfPhysics.lieFactor(lie, club))), 1 / 0.9);
     t.style.display = need <= 1.3 ? 'block' : 'none'; t.style.bottom = this.scale(need) + '%';
   }
 };
@@ -336,14 +337,14 @@ function updateHUD(){
   const pl = playsLike(); $('#playsRow').hidden = Math.abs(pl - d) < 2 || club === 'Pt'; $('#hPlays').textContent = `${fmtM(pl)} ${pl > d ? 'uphill' : 'downhill'}`;
   meter.pinTick();
   $('#hClub').textContent = C.name;
-  $('#hClubMax').textContent = C.putt ? 'Up to 20 m' : `Up to ${Math.round(C.max * GolfPhysics.lieFactor(lie, club))} m`;
+  $('#hClubMax').textContent = C.putt ? `Up to ${GolfPhysics.PUTT_MAX} m` : `Up to ${Math.round(C.max * GolfPhysics.lieFactor(lie, club))} m`;
   const ws = Math.hypot(windV[0], windV[1]);
   $('#hWind').textContent = ws < 0.3 ? 'Calm' : `${ws.toFixed(1)} m/s`;
   $('#windArrow').style.transform = `rotate(${(aim - Math.atan2(windV[1], windV[0])) * 180 / Math.PI}deg)`;
   $('#windArrow').style.opacity = ws < 0.3 ? 0.25 : 1;
   if (mode === 'aim'){
-    const reach = C.putt ? Math.min(d, 20) : C.max * GolfPhysics.lieFactor(lie, club);
-    scene.showAim(ball, aim, C.putt ? Math.min(d + 0.5, 20) : Math.min(reach, Math.max(reach * 0.5, d)), C.putt);
+    const reach = C.putt ? Math.min(d, GolfPhysics.PUTT_MAX) : C.max * GolfPhysics.lieFactor(lie, club);
+    scene.showAim(ball, aim, C.putt ? Math.min(d + 0.5, GolfPhysics.PUTT_MAX) : Math.min(reach, Math.max(reach * 0.5, d)), C.putt);
   }
   $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Hold the pad and putt. Putt without holding to practise.' : 'Hold the pad and swing. Swing without holding to practise.') : 'Link your phone, or hold Space to swing.') : '';
   drawMini();
@@ -383,7 +384,7 @@ function drawMini(){
   g.fillStyle = '#2c5e2a'; const near = course.trees.filter(t => dist([t.x, t.y], ball) < 700);
   near.forEach(t => { const p = T([t.x, t.y]); g.beginPath(); g.arc(p[0], p[1], Math.max(1.2, t.r * sc), 0, Math.PI * 2); g.fill(); });
   // aim line
-  if (mode === 'aim'){ const C = CLUBS[club], L = C.putt ? Math.min(20, dist(ball, pin) + 0.5) : C.max * GolfPhysics.lieFactor(lie, club);
+  if (mode === 'aim'){ const C = CLUBS[club], L = C.putt ? Math.min(GolfPhysics.PUTT_MAX, dist(ball, pin) + 0.5) : C.max * GolfPhysics.lieFactor(lie, club);
     const b = T(ball), e = T([ball[0] + Math.cos(aim) * L, ball[1] + Math.sin(aim) * L]);
     g.strokeStyle = 'rgba(255,255,255,.9)'; g.setLineDash([4, 4]); g.lineWidth = 2; g.beginPath(); g.moveTo(b[0], b[1]); g.lineTo(e[0], e[1]); g.stroke(); g.setLineDash([]);
     g.strokeStyle = '#ffe066'; g.lineWidth = 2; g.beginPath(); g.arc(e[0], e[1], 6, 0, Math.PI * 2); g.stroke(); }
@@ -448,5 +449,5 @@ initMenu();
 startPeer(store.get('wgolf-screen-id', null) || ('wgolf-' + rnd(6)));
 requestAnimationFrame(loop);
 // for automated tests
-window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, get scene(){ return scene; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound};
+window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, get scene(){ return scene; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound, startHole};
 })();

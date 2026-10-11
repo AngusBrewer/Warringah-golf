@@ -31,7 +31,7 @@ function greenMesh(field, W){
   const b = field.b, pad = 1.5, step = 0.5;
   const nx = Math.ceil((b[2] - b[0] + 2*pad) / step), ny = Math.ceil((b[3] - b[1] + 2*pad) / step);
   const pos = [], col = [], uv = [], c = new THREE.Color();
-  const light = new THREE.Color('#7fcf52'), dark = new THREE.Color('#71bf47'), fringe = new THREE.Color('#5fa63e');
+  const light = new THREE.Color('#40902f'), dark = new THREE.Color('#3a842a'), fringe = new THREE.Color('#357a27');
   // stripe direction across the green
   const sx = Math.cos(field.stripe), sy = Math.sin(field.stripe);
   const vert = (x, y) => {
