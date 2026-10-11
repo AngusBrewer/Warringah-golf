@@ -64,7 +64,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
     <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="readB">Read</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
     <section class="pad" id="pad" aria-label="Hold to swing">
       <div class="big" id="padBig">Hold here</div>
-      <div class="small" id="padSmall">Hold the pad and swing to hit. Swing without holding for a practice swing.</div>
+      <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
     </section>
     <div class="foot">
       <div class="result"><div class="tag" id="lastTag">Last swing</div><div class="num" id="pw">–</div></div>
@@ -78,7 +78,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 10;
+const VERSION = 11;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -149,7 +149,7 @@ function renderClubs(){
   $('#clubs').innerHTML = CLUBS.map(([k]) => `<button data-club="${k}" aria-pressed="${k === club}">${k}</button>`).join('');
   $('#clubName').textContent = CLUBS.find(c => c[0] === club)[1] + (club === 'Pt' ? ' · soft stroke, like a real putt' : '');
   $('#calBtn').textContent = club === 'Pt' ? 'Set full putt' : 'Set full swing';
-  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Hold the pad and swing to hit. Swing without holding for a practice swing.';
+  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Keep your thumb on the pad and swing.';
   $('#pad').classList.toggle('cal', !!calibrating);
 }
 $('#clubs').addEventListener('click', e => {
@@ -244,8 +244,6 @@ function onMotion(e){
 
   const acc = e.accelerationIncludingGravity;
   if (acc && acc.x != null && rot < 120) gLP = [gLP[0]*0.8 + acc.x*0.2, gLP[1]*0.8 + acc.y*0.2, gLP[2]*0.8 + acc.z*0.2];
-  // still for a moment without holding = standing at address for a practice swing
-  if (!holding && !active){ if (rot < 25){ if (!stillSince) stillSince = now; if (now - stillSince > 250) addressNow(); } else if (stillSince && now - stillSince > 300){ readyUntil = now + 2500; stillSince = 0; } else stillSince = 0; }
   if (dt){
     const w = [b*D2R, g*D2R, a*D2R], wn = Math.hypot(w[0], w[1], w[2]);
     if (wn){ const h = wn*dt/2, s = Math.sin(h)/wn; q = qmul(q, [Math.cos(h), w[0]*s, w[1]*s, w[2]*s]); const m = Math.hypot(...q); q = q.map(v => v/m); }
@@ -253,7 +251,7 @@ function onMotion(e){
   }
 
   const M = MODES[mode()];
-  const practiceOk = !holding && !calibrating && now < readyUntil && rot > M.start * 1.3;
+  const practiceOk = false;   // swings only count while you hold the pad
   if (!active && now > coolUntil && ((holding && rot > M.start) || practiceOk)){ active = true; practice = !holding; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
   if (active){
     if (rot > peak){ peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; }

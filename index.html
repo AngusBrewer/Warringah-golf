@@ -47,7 +47,14 @@ body{background:#9fd3f5}
 #holeCard{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%) scale(.96);padding:22px 40px;text-align:center;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
 #holeCard.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #cardA{font-family:var(--display);font-size:64px;font-weight:700;line-height:1;color:var(--fairway)}
-#cardB{font-size:18px;color:var(--panel-muted);margin-top:6px}
+#cardB{font-size:18px;color:var(--panel-muted);margin-top:6px;white-space:pre-line}
+/* Wii-style call-outs: big bouncy words in the middle of the screen */
+#callout{position:fixed;left:50%;top:30%;transform:translate(-50%,-50%) scale(.4);font-family:var(--display);font-size:clamp(44px,9vw,96px);font-weight:800;color:#fff;letter-spacing:.01em;
+  -webkit-text-stroke:3px #1f7a3a;paint-order:stroke fill;text-shadow:0 6px 0 rgba(0,0,0,.18);opacity:0;pointer-events:none;z-index:4;white-space:nowrap}
+#callout.gold{-webkit-text-stroke-color:#b07a00;color:#ffe066}
+#callout.bad{-webkit-text-stroke-color:#9b2d20;color:#fff}
+#callout.show{animation:pop 1.9s cubic-bezier(.2,1.4,.4,1) forwards}
+@keyframes pop{0%{opacity:0;transform:translate(-50%,-50%) scale(.4)}12%{opacity:1;transform:translate(-50%,-50%) scale(1.12)}22%{transform:translate(-50%,-50%) scale(1)}80%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-60%) scale(1)}}
 /* Wii-style swing bar: fills as you swing; the white line is 100%, red above it is an overswing */
 #meter{position:absolute;left:16px;top:50%;transform:translateY(-50%);padding:10px 8px;display:grid;gap:6px;justify-items:center;width:58px}
 #meter{--th:240px}
@@ -137,20 +144,24 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
   </section>
 </div>
 <div class="panel" id="holeCard" aria-live="polite"><div id="cardA"></div><div id="cardB"></div></div>
+<div id="callout" aria-live="polite"></div>
 
 <div class="overlay" id="menu">
   <div class="panel menuBox">
     <div>
-      <h1>Warringah Golf</h1>
+      <h1>Northside Golf</h1>
       <p>Swing your phone like a Wii remote and play real local courses.</p>
     </div>
     <div class="courses">
-      <div class="course">
-        <div><b>Warringah Golf Club</b><br><span>North Manly · 18 holes · from the map</span></div>
-        <div class="acts"><button id="resumeBtn" class="btnp" hidden>Resume</button><button id="playBtn" class="primary">Play 18 holes</button></div>
+      <div class="course" data-course="warringah" data-name="Warringah">
+        <div><b>Warringah Golf Club</b><br><span>North Manly · 18 holes · par 69</span></div>
+        <div class="acts"><button class="btnp resume" hidden>Resume</button><button id="playBtn" class="primary play">Play 18 holes</button></div>
+      </div>
+      <div class="course" data-course="northbridge" data-name="Northbridge">
+        <div><b>Northbridge Golf Club</b><br><span>Middle Harbour · 18 holes · par 64</span></div>
+        <div class="acts"><button class="btnp resume" hidden>Resume</button><button class="primary play">Play 18 holes</button></div>
       </div>
       <div class="course soon"><div><b>Balgowlah Golf Club</b><br><span>9 holes · coming next</span></div></div>
-      <div class="course soon"><div><b>Northbridge Golf Club</b><br><span>18 holes · coming next</span></div></div>
     </div>
     <div class="opts">
       <label>Hook and slice <select id="curveSel"><option value="off">Off</option><option value="gentle">Gentle</option><option value="full">Full</option></select></label>
@@ -193,6 +204,8 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
 <script src="vendor/qrcode.js"></script>
 <script src="courses/warringah.js"></script>
 <script src="courses/warringah-elev.js"></script>
+<script src="courses/northbridge.js"></script>
+<script src="courses/northbridge-elev.js"></script>
 <script src="js/course.js"></script>
 <script src="js/terrain.js"></script>
 <script src="js/trees.js"></script>

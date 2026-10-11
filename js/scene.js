@@ -60,7 +60,7 @@ class GolfScene {
 
   // ---------- ground ----------
   buildGround(){
-    const c = this.course, d = c.d, [x0, y0, x1, y1] = c.extent, M = 90;
+    const c = this.course, d = c.d, [x0, y0, x1, y1] = c.extent, M = d.margin || 90;
     this.gx0 = x0 - M; this.gy0 = y0 - M; this.gw = (x1 - x0) + 2*M; this.gh = (y1 - y0) + 2*M;
     const S = this.px = Math.min(2, 4000 / Math.max(this.gw, this.gh));  // pixels per metre
     const cv = document.createElement('canvas'); cv.width = Math.round(this.gw * S); cv.height = Math.round(this.gh * S);
@@ -118,6 +118,7 @@ class GolfScene {
     // a few suburban roofs outside the course
     const r = rng(77), roofs = [], geoB = new THREE.BoxGeometry(1, 1, 1);
     for (let i = 0; i < 420; i++){ const x = this.gx0 - 250 + r() * (this.gw + 500), y = this.gy0 - 250 + r() * (this.gh + 500);
+      if (this.course.inWater(x, y) || (d.sea && this.terrain.height(x, y) + (this.terrain.lo || 0) < 2.5)) continue;   // not in the harbour
       if (this.course.inBounds(x, y) || this.course.inBounds(x + 25, y) || this.course.inBounds(x - 25, y) || this.course.inBounds(x, y + 25) || this.course.inBounds(x, y - 25)) continue;
       roofs.push([x, y, 10 + r()*8, 12 + r()*8, 4 + r()*3, r()]); }
     const houses = new THREE.InstancedMesh(geoB, new THREE.MeshLambertMaterial({color: '#ffffff'}), roofs.length);

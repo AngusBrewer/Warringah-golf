@@ -23,12 +23,20 @@ const CUP = 0.12;
 const PUTT_MAX = 24;
 const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', rough:'Rough', bunker:'Bunker', water:'Water', ob:'Out of bounds'};
 
-function lieFactor(lie, club){ if (lie === 'bunker' && (club === 'SW' || club === 'PW')) return 0.85; return LIE_DIST[lie] ?? 0.86; }
+// Like Wii golf, each lie gives a range of how much of the club's distance you get; each shot lands
+// somewhere in it. Rough knocks 15-25% off, a bunker 35-45% (less with a wedge).
+const LIE_RANGE = {tee: [1, 1], fairway: [1, 1], green: [1, 1], fringe: [0.95, 1], rough: [0.75, 0.85], bunker: [0.55, 0.65]};
+function lieRange(lie, club){ if (lie === 'bunker' && (club === 'SW' || club === 'PW')) return [0.8, 0.9]; return LIE_RANGE[lie] || LIE_RANGE.rough; }
+function lieFactor(lie, club){ const r = lieRange(lie, club); return (r[0] + r[1]) / 2; }
+// The putter's range steps up with the length of the putt (as in Wii golf), so a full stroke on a short
+// putt only goes a little past the hole instead of off the green.
+const PUTT_RANGES = [3, 6, 10, 15, 24];
+function puttRange(d){ for (const r of PUTT_RANGES) if (r >= d * 1.3) return r; return PUTT_RANGES[PUTT_RANGES.length - 1]; }
 
 // Full shot. Returns the flight samples for animation plus where the ball ends up.
 function fullShot(course, s){
   const C = CLUBS[s.club], ang = s.ang, ux = Math.cos(ang), uy = Math.sin(ang), rx = Math.sin(ang), ry = -Math.cos(ang); // right of aim
-  let carry = C.max * Math.pow(Math.max(0.02, s.power), 0.9) * lieFactor(s.lie, s.club);
+  let carry = C.max * Math.pow(Math.max(0.02, s.power), 0.9) * (s.lieK ?? lieFactor(s.lie, s.club));
   const along = s.wind ? s.wind[0]*ux + s.wind[1]*uy : 0, cross = s.wind ? s.wind[0]*rx + s.wind[1]*ry : 0;
   carry *= 1 + along * 0.012 * C.wind;
   const drift = cross * 0.9 * C.wind * carry / 100;
@@ -110,7 +118,7 @@ function fullShot(course, s){
 
 // Putt. s.field (optional) is the green's slope surface; works from the fringe and rough too.
 function putt(course, s){
-  const ang = s.ang, D = Math.max(0.3, PUTT_MAX * s.power);
+  const ang = s.ang, D = Math.max(0.15, (s.max || PUTT_MAX) * s.power);
   const decel = 0.45, cup = s.pin;   // quick greens: the ball keeps rolling and takes the break
   let v = Math.sqrt(2 * decel * D), vx = Math.cos(ang) * v, vy = Math.sin(ang) * v;
   let x = s.from[0], y = s.from[1], holed = false, lie = 'green', lip = false;
@@ -144,5 +152,5 @@ function dropPoint(course, samples, from){
   return from.slice();
 }
 
-window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, PUTT_MAX, lieFactor, fullShot, putt, dropPoint};
+window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, PUTT_MAX, lieFactor, lieRange, puttRange, fullShot, putt, dropPoint};
 })();
