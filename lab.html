@@ -75,7 +75,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
     <div class="hright">
       <span class="chip" id="linkChip">Phone not linked</span>
       <button id="pairBtn" hidden>Show phone code</button>
-      <button id="copyBtn">Copy results for Claude</button>
+      <button id="copyBtn">Copy results</button>
     </div>
   </header>
 
@@ -157,7 +157,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
 <script>
 (() => {
 const $ = s => document.querySelector(s);
-const VERSION = 11;   // bump on every upload; the phone page must match
+const VERSION = 12;   // bump on every upload; the phone page must match
 const logEl = $('#log');
 function log(m){ logEl.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`; logEl.scrollTop = logEl.scrollHeight; }
 function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }
@@ -396,7 +396,7 @@ $('#copyBtn').onclick = async () => {
   shots.slice(-60).forEach(s => lines.push(`${s.club} ${Math.round(s.peak)} ${Math.round(s.power*100)}% face ${s.face}° (raw ${s.faceRaw}°, old ${s.faceOld}°) ${s.dur}ms${s.over ? ' OVER' : ''}`));
   lines.push('', '--- log ---', logEl.textContent.trim().split('\n').slice(-15).join('\n'));
   const text = lines.join('\n');
-  try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your chat with Claude.'); }
+  try { await navigator.clipboard.writeText(text); toast('Copied to the clipboard.'); }
   catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied.'); }
 };
 

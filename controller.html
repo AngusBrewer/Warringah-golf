@@ -45,6 +45,22 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 .result .num small{font-size:16px;color:var(--muted);margin-left:2px}
 .result .tag{font-size:13px;color:var(--muted)}
 .live{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.live[hidden]{display:none}
+/* impact flash: the pad lights up when the ball is struck */
+.pad.hit{animation:hit .35s ease-out}
+@keyframes hit{0%{box-shadow:0 0 0 0 rgba(255,224,102,.9);background:#fff6cc}100%{box-shadow:0 0 0 28px rgba(255,224,102,0)}}
+/* spin: tap where on the ball to strike it */
+.spinrow{display:flex;align-items:center;gap:12px}
+.spinrow[hidden]{display:none}
+.spinball{position:relative;width:64px;height:64px;border-radius:50%;flex:none;touch-action:none;
+  background:radial-gradient(circle at 35% 30%,#fff 0,#f1f1f1 40%,#cfd2d4 75%,#a9adb0 100%);box-shadow:inset 0 -3px 6px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.25)}
+.spinball::before,.spinball::after{content:"";position:absolute;background:rgba(60,60,60,.45)}
+.spinball::before{left:50%;top:16%;bottom:16%;width:1.5px;transform:translateX(-50%)}
+.spinball::after{top:50%;left:16%;right:16%;height:1.5px;transform:translateY(-50%)}
+.spinball i{position:absolute;width:12px;height:12px;border-radius:50%;background:#c6262e;border:2px solid #fff;transform:translate(-50%,-50%);left:50%;top:50%;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+.spinrow .lab{font-size:14px;color:var(--muted)}
+.spinrow .lab b{display:block;color:var(--ink);font-size:16px}
+.haptic{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;overflow:hidden}
 </style>
 </head>
 <body>
@@ -56,12 +72,15 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <main>
   <section class="start" id="startView">
     <button class="primary" id="startBtn">Start</button>
-    <p>Your phone will ask to use motion. Tap <b>Allow</b>. Keep this page open while you play.</p>
+    <p>Your phone will ask to use <b>motion</b>. Tap <b>Allow</b>: that's how it feels your swing. Keep this page open while you play.</p>
+    <p><b>Hold it safely:</b> grip the phone firmly in both hands like a club handle, with your thumb on the green pad. Give yourself room to swing.</p>
   </section>
   <div id="playView" hidden style="display:contents">
     <div class="clubs" id="clubs" role="group" aria-label="Choose a club"></div>
     <div class="clubname" id="clubName"></div>
     <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="readB">Read</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
+    <div class="spinrow" id="spinRow"><div class="spinball" id="spinBall" aria-label="Spin: tap where to strike the ball"><i id="spinDot"></i></div>
+      <div class="lab"><b id="spinLab">No spin</b>Tap the ball: top for topspin, bottom for backspin, sides to curve it. Double-tap to reset.</div></div>
     <section class="pad" id="pad" aria-label="Hold to swing">
       <div class="big" id="padBig">Hold here</div>
       <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
@@ -70,7 +89,8 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
       <div class="result"><div class="tag" id="lastTag">Last swing</div><div class="num" id="pw">–</div></div>
       <button id="calBtn">Set full swing</button>
     </div>
-    <div class="live" id="live"></div>
+    <div class="live" id="live" hidden></div>
+    <label class="haptic" aria-hidden="true"><input type="checkbox" switch id="hapticSw"></label>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -78,7 +98,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 11;
+const VERSION = 12;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -106,7 +126,9 @@ let face0 = store.get('wgolf-face0', null);      // your 'straight' face reading
 let calibrating = null;                          // {mode, peaks: [], faces: []}
 const mode = () => club === 'Pt' ? 'putt' : ['9i', 'PW', 'SW'].includes(club) ? 'chip' : 'full';
 
-setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your Mac to link. You can still practise here.');
+setMsg(hostId ? 'Tap Start to link with the screen.' : 'No screen code. Scan the QR code on your computer to link. You can still practise here.');
+if (typeof DeviceMotionEvent === 'undefined') setMsg('This browser can\'t read your phone\'s motion. Use Safari on iPhone or Chrome on Android. (On the computer you can also swing with the Space bar.)');
+if (/[?&#]debug/.test(location.href)) document.querySelector('#live').hidden = false;
 if (!window.isSecureContext) setMsg('Open this page from its https:// address, or motion will be blocked.');
 
 // ---------- link ----------
@@ -141,7 +163,10 @@ function onScreen(m){
   if (!m || typeof m !== 'object') return;
   if (m.t === 'ping') send({t:'pong', at: m.at});
   else if (m.t === 'club' && CLUBS.some(c => c[0] === m.club) && !calibrating && m.club !== club){ club = m.club; store.set('wgolf-club', club); renderClubs(); }
-  else if (m.t === 'state' && typeof m.text === 'string') setMsg(m.text.slice(0, 120));
+  else if (m.t === 'state' && typeof m.text === 'string'){ setMsg(m.text.slice(0, 120)); if (m.club) $('#spinRow').hidden = m.club === 'Pt'; }
+  else if (m.t === 'spin') showSpin(Number(m.top) || 0, Number(m.side) || 0);
+  else if (m.t === 'calibrate' && m.cancel){ if (calibrating) $('#calBtn').click(); }
+  else if (m.t === 'calibrate' && !calibrating){ if (m.mode === 'full' && club === 'Pt'){ club = 'Dr'; store.set('wgolf-club', club); } $('#calBtn').click(); }
 }
 
 // ---------- clubs ----------
@@ -151,6 +176,7 @@ function renderClubs(){
   $('#calBtn').textContent = club === 'Pt' ? 'Set full putt' : 'Set full swing';
   $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Keep your thumb on the pad and swing.';
   $('#pad').classList.toggle('cal', !!calibrating);
+  $('#spinRow').hidden = club === 'Pt';
 }
 $('#clubs').addEventListener('click', e => {
   const b = e.target.closest('button[data-club]'); if (!b || calibrating) return;
@@ -184,6 +210,42 @@ function calSwing(peak, faceRaw){
   calibrating = null; renderClubs(); hello();
 }
 
+// ---------- spin ----------
+let spin = {top: 0, side: 0};
+function showSpin(top, side){
+  spin = {top, side}; const d = $('#spinDot'); d.style.left = (50 + side * 38) + '%'; d.style.top = (50 - top * 38) + '%';
+  const t = top > 0.25 ? 'Topspin' : top < -0.25 ? 'Backspin' : '', sd = side > 0.25 ? 'fade' : side < -0.25 ? 'draw' : '';
+  $('#spinLab').textContent = t && sd ? `${t} + ${sd}` : t || (sd ? sd[0].toUpperCase() + sd.slice(1) + ' spin' : 'No spin');
+}
+(() => { const b = $('#spinBall');
+  const set = e => { const r = b.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 2 - 1, y = (e.clientY - r.top) / r.height * 2 - 1, l = Math.hypot(x, y), k = l > 1 ? 1 / l : 1;
+    const sx = Math.abs(x * k) < 0.15 ? 0 : x * k, sy = Math.abs(y * k) < 0.15 ? 0 : -y * k; showSpin(sy, sx); send({t:'spin', top: sy, side: sx}); };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); set(e); try { b.setPointerCapture(e.pointerId); } catch {} });
+  b.addEventListener('pointermove', e => { if (e.buttons) set(e); });
+  b.addEventListener('dblclick', () => { showSpin(0, 0); send({t:'spin', top: 0, side: 0}); });
+})();
+
+// ---------- feeling the strike ----------
+// Android buzzes. iPhones don't let web pages vibrate, so every phone also gets a "thwack" and a flash
+// (and newer iPhones a light tap from a hidden switch).
+let actx = null;
+function unlockAudio(){ try { if (!actx){ const A = window.AudioContext || window.webkitAudioContext; if (A) actx = new A(); } if (actx && actx.state === 'suspended') actx.resume(); } catch {} }
+function thwack(power, putt){
+  if (!actx || actx.state !== 'running') return;
+  const t = actx.currentTime, n = actx.createBuffer(1, Math.ceil(actx.sampleRate * 0.08), actx.sampleRate), d = n.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+  const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); src.buffer = n; f.type = putt ? 'bandpass' : 'highpass'; f.frequency.value = putt ? 2200 : 1200;
+  g.gain.value = putt ? 0.35 : 0.5 + power * 0.5; src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t);
+  if (!putt){ const o = actx.createOscillator(), og = actx.createGain(); o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(60, t + 0.12);
+    og.gain.setValueAtTime(0.5, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.15); o.connect(og); og.connect(actx.destination); o.start(t); o.stop(t + 0.2); }
+}
+function impact(power, putt){
+  try { navigator.vibrate?.(putt ? 20 : [30 + Math.round(power * 50)]); } catch {}
+  try { $('#hapticSw').click(); } catch {}
+  thwack(power, putt);
+  pad.classList.remove('hit'); void pad.offsetWidth; pad.classList.add('hit');
+}
+
 // ---------- motion ----------
 let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
 let holding = false, active = false, peak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
@@ -215,7 +277,7 @@ function faceNow(){
 }
 
 $('#startBtn').onclick = async () => {
-  $('#startBtn').disabled = true;
+  $('#startBtn').disabled = true; unlockAudio();
   let perm = 'granted';
   try {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') perm = await DeviceMotionEvent.requestPermission();
@@ -259,7 +321,7 @@ function onMotion(e){
     if ((lowSince && now - lowSince > M.endHold && now - t0 > 120) || now - t0 > 2500) finish(now);
   }
   if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding}); }
-  $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''} · version ${VERSION}`;
+  if (!$('#live').hidden) $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''} · version ${VERSION}`;
 }
 
 // A swing is a backswing, a pause at the top, then the faster downswing. Each burst
@@ -275,11 +337,11 @@ function finish(now){
 }
 function shoot(p){
   coolUntil = performance.now() + 600;
-  try { navigator.vibrate?.(p.practice ? 15 : p.mode === 'putt' ? 25 : 60); } catch {}
-  if (calibrating && !p.practice){ send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
+  if (calibrating && !p.practice){ impact(0.6, p.mode === 'putt'); send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
   const M = MODES[p.mode], top = p.mode === 'putt' ? (puttFull || PUTT_DEFAULT) : (full || FULL_DEFAULT);
   const power = Math.max(0.02, Math.min(1, (p.peak - M.floor) / (top - M.floor)));
   const over = p.mode === 'full' && p.peak > top * 1.15;
+  impact(power, p.mode === 'putt');
   if (p.practice){ readyUntil = performance.now() + 2500; }   // keep rehearsing without a fresh pause
   send({t: p.practice ? 'practice' : 'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
   $('#lastTag').textContent = (p.practice ? 'Practice ' : 'Last ') + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');

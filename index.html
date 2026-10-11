@@ -44,6 +44,37 @@ body{background:#9fd3f5}
 .br button.on{background:#2c7a4c;color:#fff;border-color:#2c7a4c}
 #banner{position:absolute;left:50%;bottom:calc(120px + env(safe-area-inset-bottom,0px));transform:translate(-50%,10px);padding:12px 20px;font-size:18px;font-weight:600;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;max-width:min(560px,90vw);text-align:center}
 #banner.show{opacity:1;transform:translate(-50%,0)}
+#banner{white-space:pre-line;line-height:1.45}
+/* spin: where on the ball you strike it */
+#spinBox{position:absolute;right:calc(16px + 236px);bottom:calc(16px + env(safe-area-inset-bottom,0px));padding:10px;display:grid;justify-items:center;gap:6px;width:112px}
+#spinBox[hidden]{display:none}
+#spinPad{position:relative;width:84px;height:84px;border-radius:50%;cursor:crosshair;touch-action:none;
+  background:radial-gradient(circle at 34% 28%,#fff 0,#f3f3f3 38%,#d4d7d9 72%,#a6abae 100%);box-shadow:inset 0 -4px 8px rgba(0,0,0,.18),0 2px 6px rgba(0,0,0,.25)}
+#spinPad::before,#spinPad::after{content:"";position:absolute;background:rgba(50,50,50,.5)}
+#spinPad::before{left:50%;top:18%;bottom:18%;width:2px;transform:translateX(-50%)}
+#spinPad::after{top:50%;left:18%;right:18%;height:2px;transform:translateY(-50%)}
+#spinDot{position:absolute;left:50%;top:50%;width:13px;height:13px;border-radius:50%;background:#c6262e;border:2px solid #fff;transform:translate(-50%,-50%);box-shadow:0 1px 3px rgba(0,0,0,.4);transition:left .12s,top .12s}
+#spinLab{font-size:13px;font-weight:600;color:var(--panel-muted);text-align:center}
+@media (max-width:760px){ #spinBox{right:calc(16px + 146px);width:92px} #spinPad{width:64px;height:64px} }
+/* swing bar from a bad lie: the full line drops */
+#meter.lowered .full{background:#ffe066}
+#meter .full,#meter .over{transition:bottom .3s,height .3s}
+/* live link light */
+.dotLive{display:inline-block;width:9px;height:9px;border-radius:50%;background:#b8c2b9;margin-right:6px;vertical-align:1px}
+.dotLive.on{background:#2fae5a;box-shadow:0 0 0 0 rgba(47,174,90,.6);animation:pulse 1.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,174,90,.6)}100%{box-shadow:0 0 0 10px rgba(47,174,90,0)}}
+/* first-time guide */
+.guideBox{width:min(640px,100%);padding:26px;display:grid;gap:16px}
+.guideBox h2{font-size:32px;color:var(--fairway);margin:0}
+.guideBox p{margin:0;color:var(--panel-ink);line-height:1.5}
+.guideBox ul{margin:0;padding-left:20px;line-height:1.6}
+.steps{display:flex;gap:6px}.steps i{flex:1;height:5px;border-radius:3px;background:#dfe6dd}.steps i.on{background:var(--fairway)}
+.gStatus{display:grid;gap:6px;font-weight:600}
+.calDots{display:flex;gap:10px;font-size:28px;color:#cfd8cd}.calDots .on{color:var(--fairway)}
+.gActs{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.course .pick{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.course select{font:inherit;padding:8px;border-radius:10px;border:1px solid var(--panel-line);background:#fff}
+details.more summary{cursor:pointer;color:var(--panel-muted);font-size:14px}
 #holeCard{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%) scale(.96);padding:22px 40px;text-align:center;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
 #holeCard.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #cardA{font-family:var(--display);font-size:64px;font-weight:700;line-height:1;color:var(--fairway)}
@@ -121,7 +152,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
     <div><div class="k">Wind</div><b id="hWind">Calm</b></div>
   </section>
   <div class="tr">
-    <span class="chip" id="linkChip">Phone not linked</span>
+    <span class="chip" id="linkChip"><span class="dotLive" id="liveDot"></span><span id="linkTxt">Phone not linked</span></span>
     <button id="pairBtn">Phone code</button>
     <button id="cardBtn">Scorecard</button>
     <button id="menuBtn">Menu</button>
@@ -136,6 +167,10 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
   <section class="panel br">
     <canvas id="mini" width="400" height="580" aria-label="Map of this hole"></canvas>
     <div class="row"><button id="mapBtn">Overhead</button><button id="readBtn">Read green</button></div>
+  </section>
+  <section class="panel" id="spinBox" aria-label="Spin" hidden>
+    <div id="spinPad" title="Click where to strike the ball: top = topspin, bottom = backspin, sides = curve. Double-click to reset."><i id="spinDot"></i></div>
+    <div id="spinLab">No spin</div>
   </section>
   <div class="panel" id="banner" role="status"></div>
   <section class="panel" id="meter" aria-label="Swing power">
@@ -155,19 +190,24 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
     <div class="courses">
       <div class="course" data-course="warringah" data-name="Warringah">
         <div><b>Warringah Golf Club</b><br><span>North Manly · 18 holes · par 69</span></div>
-        <div class="acts"><button class="btnp resume" hidden>Resume</button><button id="playBtn" class="primary play">Play 18 holes</button></div>
+        <div class="acts"><button class="btnp resume" hidden>Resume</button><div class="pick"><select class="roundSel" aria-label="Round"></select><button id="playBtn" class="primary play">Play</button></div></div>
       </div>
       <div class="course" data-course="northbridge" data-name="Northbridge">
         <div><b>Northbridge Golf Club</b><br><span>Middle Harbour · 18 holes · par 64</span></div>
-        <div class="acts"><button class="btnp resume" hidden>Resume</button><button class="primary play">Play 18 holes</button></div>
+        <div class="acts"><button class="btnp resume" hidden>Resume</button><div class="pick"><select class="roundSel" aria-label="Round"></select><button class="primary play">Play</button></div></div>
       </div>
       <div class="course soon"><div><b>Balgowlah Golf Club</b><br><span>9 holes · coming next</span></div></div>
     </div>
     <div class="opts">
-      <label>Hook and slice <select id="curveSel"><option value="off">Off</option><option value="gentle">Gentle</option><option value="full">Full</option></select></label>
+      <label>Difficulty <select id="diffSel"><option value="beginner">Beginner</option><option value="standard">Standard</option><option value="simulation">Simulation</option></select></label>
       <label><input type="checkbox" id="windChk"> Wind</label>
+      <label><input type="checkbox" id="muteChk"> Sound</label>
+      <button id="guideBtn">How to play</button>
+      <details class="more"><summary>More options</summary><div class="opts" style="margin-top:8px">
+        <label>Hook and slice <select id="curveSel"><option value="off">Off</option><option value="gentle">Gentle</option><option value="full">Full</option></select></label>
+        <a href="lab.html">Swing Lab (fine-tune your swing)</a></div></details>
     </div>
-    <div class="menuFoot"><span>Set up your swing first in the <a href="lab.html">Swing Lab</a>.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Elevation © Geoscience Australia · Trees traced from Esri World Imagery</span></div>
+    <div class="menuFoot"><span>Beginner makes hooks, rough and putting gentler; Simulation is the real thing.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Elevation © Geoscience Australia · Trees traced from Esri World Imagery</span></div>
   </div>
 </div>
 
@@ -177,15 +217,24 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
     <div class="pairRow">
       <div id="qr">Making a code…</div>
       <ol>
-        <li>Phone on the same Wi-Fi.</li>
-        <li>Scan the code and open the link.</li>
-        <li>Tap <b>Start</b>.</li>
-        <li>Use <b>◀ Aim ▶</b> to aim, then hold the pad and swing.</li>
+        <li>Scan this code with your phone's camera and open the link.</li>
+        <li>Tap <b>Start</b>, then <b>Allow</b> when it asks about motion (iPhone asks once).</li>
+        <li>Hold the phone like a club grip, thumb on the green pad, and swing.</li>
       </ol>
     </div>
+    <div class="gStatus"><span><span class="dotLive" id="pairDot"></span><span id="pairTxt">Waiting for your phone…</span></span></div>
     <div id="qrLink"></div>
-    <div class="keys">No phone? Aim with <kbd>←</kbd> <kbd>→</kbd>, change club with <kbd>↑</kbd> <kbd>↓</kbd> (the putter works from anywhere), hold <kbd>Space</kbd> and let go to swing, <kbd>M</kbd> overhead view, <kbd>G</kbd> read the green.</div>
-    <div style="display:flex;justify-content:flex-end"><button id="pairClose">Close</button></div>
+    <div class="keys">No phone? Aim with <kbd>←</kbd> <kbd>→</kbd>, change club with <kbd>↑</kbd> <kbd>↓</kbd>, hold <kbd>Space</kbd> and let go to swing, <kbd>M</kbd> overhead view, <kbd>G</kbd> read the green, <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> spin.</div>
+    <div class="gActs"><button id="pairReset">Make a new code</button><span style="display:flex;gap:8px"><button id="pairKeys">Play with keyboard</button><button id="pairClose" class="primary">Done</button></span></div>
+  </div>
+</div>
+
+<div class="overlay" id="guide" hidden>
+  <div class="panel guideBox" role="dialog" aria-labelledby="gTitle">
+    <div class="steps" id="gSteps"><i></i><i></i><i></i><i></i></div>
+    <h2 id="gTitle"></h2>
+    <div id="gBody"></div>
+    <div class="gActs"><button id="gSkip">Skip</button><span style="display:flex;gap:8px"><button id="gBack">Back</button><button id="gNext" class="primary">Next</button></span></div>
   </div>
 </div>
 
@@ -212,6 +261,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
 <script src="js/greens.js"></script>
 <script src="js/golfer.js"></script>
 <script src="js/physics.js"></script>
+<script src="js/sound.js"></script>
 <script src="js/scene.js"></script>
 <script src="js/game.js"></script>
 </body>
