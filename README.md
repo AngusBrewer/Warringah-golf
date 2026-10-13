@@ -16,6 +16,8 @@ A Wii-golf-style game you play in the browser, with your phone as the club. Two 
    - I J K L add spin, X resets it.
    - G reads the green, M switches to the overhead view, S shows the scorecard.
 
+Two players: choose **2 players** in the menu, then each player scans the QR code with their own phone (the first phone is Player 1). Each phone only swings on its owner's turn. Whoever is farthest from the hole plays next, and the lowest score on the last hole tees off first. The other player's ball shows as a coloured ball on a pole, and the scorecard has a row for each player.
+
 Difficulty:
 
 - **Beginner** (the default for new players): kinder rough, gentle hooks and slices, putts inside about 60 cm are conceded.
@@ -33,11 +35,12 @@ Difficulty:
   - `scene.js`: the 3D course.
   - `sound.js`: synthesised sound effects.
   - Plus trees, greens, terrain and golfer.
-- `courses/`: generated course data. `*-elev.js` files hold the LiDAR ground heights.
+- `courses/`: generated course data. `*-elev.js` files hold the LiDAR ground heights; `northbridge-photo.jpg` is the aerial photo laid on Northbridge's ground.
 - `tools/`: course builders.
   - Warringah: `build_course.py`.
   - Northbridge: `build_northbridge.py`.
-  - Elevation: `build_elev.py <course> [max green slope]`.
+  - Elevation: `build_elev.py <course> [max green slope]` (5 m data), or `build_elev1m.py <course> <tiles.tif…>` for NSW 1 m LiDAR tiles downloaded from Elvis (elevation.fsdf.org.au).
+  - Ground photo: `build_photo.py <course> <photo> x0 y0 x1 y1` (NSW aerial imagery resampled to course metres at 3 px/m).
   - Trees: `canopy.py`, which traces them from aerial imagery.
 - `tests/`: automated tests. See [TESTING.md](TESTING.md).
 
@@ -48,6 +51,6 @@ It is a static site, so GitHub Pages serves it as is. There is no build step. Up
 ## Credits
 
 - Course map data © OpenStreetMap contributors (ODbL).
-- Elevation © Geoscience Australia (CC BY 4.0).
+- Elevation © Geoscience Australia (CC BY 4.0); Northbridge 1 m LiDAR and aerial photo © Spatial Services NSW (CC BY 4.0).
 - Tree positions and the Northbridge harbour traced from Esri World Imagery.
 - Uses three.js, PeerJS and qrcode-generator (vendored).

@@ -1,9 +1,14 @@
-// Real ground heights from Geoscience Australia's LiDAR 5 m elevation model.
-// A 10 m grid covers the whole course; each green also has its own 5 m grid (every LiDAR cell) for putting.
+// Real ground heights from LiDAR. Warringah: Geoscience Australia's 5 m model (10 m course grid, 5 m greens).
+// Northbridge: NSW 1 m LiDAR (2 m grid over the whole ground, 1 m grids on the greens).
 (function(){
 'use strict';
 class Grid {
-  constructor(g){ this.x0 = g.x0; this.y0 = g.y0; this.step = g.step; this.nx = g.nx; this.ny = g.ny; this.h = g.h.map(v => v / 100); }   // stored in cm
+  constructor(g){ this.x0 = g.x0; this.y0 = g.y0; this.step = g.step; this.nx = g.nx; this.ny = g.ny;
+    if (g.b64){   // centimetres as little-endian Int16, base64 (the 1 m LiDAR grids)
+      const bin = atob(g.b64), n = bin.length >> 1, h = new Float32Array(n);
+      for (let i = 0; i < n; i++){ let v = bin.charCodeAt(2*i) | (bin.charCodeAt(2*i + 1) << 8); if (v > 32767) v -= 65536; h[i] = v / 100; }
+      this.h = h;
+    } else this.h = g.h.map(v => v / 100); }   // stored in cm
   inside(x, y){ return x >= this.x0 && y >= this.y0 && x <= this.x0 + (this.nx - 1) * this.step && y <= this.y0 + (this.ny - 1) * this.step; }
   at(x, y){
     const fx = Math.max(0, Math.min(this.nx - 1.001, (x - this.x0) / this.step)), fy = Math.max(0, Math.min(this.ny - 1.001, (y - this.y0) / this.step));
@@ -16,7 +21,10 @@ class Terrain {
   constructor(data){
     this.base = new Grid(data.course);
     this.fine = (data.greens || []).map(g => new Grid(g));
-    this.lo = Math.min(...this.base.h);           // lowest point sits at height 0 in the 3D world
+    let lo = Infinity; for (const v of this.base.h) if (v < lo) lo = v;
+    this.lo = lo;                                  // lowest point sits at height 0 in the 3D world
+    this.mesh = data.mesh || 5;                    // ground mesh spacing the data supports (m)
+    this.realGreens = !!data.realGreens;           // greens measured at 1 m: no made-up contours needed
   }
   height(x, y){
     for (const g of this.fine){

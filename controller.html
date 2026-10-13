@@ -98,7 +98,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 12;
+const VERSION = 14;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -154,7 +154,8 @@ function link(){
 let retryT = 0;
 function connectNow(){
   if (!peer || peer.destroyed || (conn && conn.open)) return;
-  const c = peer.connect(hostId, {serialization: 'json'}); conn = c;
+  let slot = -1; try { slot = Number(sessionStorage.getItem('wgolf-slot-' + hostId) ?? -1); } catch {}
+  const c = peer.connect(hostId, {serialization: 'json', metadata: {slot: Number.isInteger(slot) ? slot : -1}}); conn = c;
   c.on('open', () => { chip('Linked', 'ok'); hello(); });
   c.on('data', onScreen);
   c.on('close', () => { if (c !== conn) return; chip('Reconnecting…'); clearTimeout(retryT); retryT = setTimeout(connectNow, 1500); });
@@ -164,6 +165,8 @@ function onScreen(m){
   if (m.t === 'ping') send({t:'pong', at: m.at});
   else if (m.t === 'club' && CLUBS.some(c => c[0] === m.club) && !calibrating && m.club !== club){ club = m.club; store.set('wgolf-club', club); renderClubs(); }
   else if (m.t === 'state' && typeof m.text === 'string'){ setMsg(m.text.slice(0, 120)); if (m.club) $('#spinRow').hidden = m.club === 'Pt'; }
+  else if (m.t === 'you' && Number(m.n) >= 1){ const n = Number(m.n); try { sessionStorage.setItem('wgolf-slot-' + hostId, String(n - 1)); } catch {}
+    const h = document.querySelector('h1'); h.textContent = Number(m.of) > 1 ? `Player ${n}` : 'Club'; h.style.color = Number(m.of) > 1 && /^#[0-9a-f]{6}$/i.test(m.color || '') ? m.color : ''; }
   else if (m.t === 'spin') showSpin(Number(m.top) || 0, Number(m.side) || 0);
   else if (m.t === 'calibrate' && m.cancel){ if (calibrating) $('#calBtn').click(); }
   else if (m.t === 'calibrate' && !calibrating){ if (m.mode === 'full' && club === 'Pt'){ club = 'Dr'; store.set('wgolf-club', club); } $('#calBtn').click(); }

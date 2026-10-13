@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 12;
+const VERSION = 14;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -21,7 +21,7 @@ const CURVE = {off: 0, gentle: 0.5, full: 1};
 const settings = {
   get curve(){ const v = store.get('wgolf-curve', 'gentle'); return v in CURVE ? v : 'gentle'; },
   get flip(){ return !!store.get('wgolf-flip2', false); },
-  get wind(){ return store.get('wgolf-wind', true); },
+  get wind(){ return store.get('wgolf-wind2', true); },
   get difficulty(){ const v = store.get('wgolf-difficulty', 'beginner'); return GolfPhysics.DIFFICULTY[v] ? v : 'beginner'; }   // new players start on Beginner
 };
 GolfPhysics.setDifficulty(settings.difficulty);
@@ -34,20 +34,31 @@ let scores = [], mapView = false, aimHeld = 0, lastPos = null;
 let roundHoles = [], roundName = '18 holes';     // which of the course's holes this round plays
 let spin = {top: 0, side: 0};                    // where you strike the ball: top/back spin and side spin
 const recentFaces = store.get('wgolf-recentface', []);
+// ---- players: one or two, each with their own phone, ball and scorecard ----
+const PCOL = ['#2e7fd6', '#e0602a'];
+let nPlayers = Math.max(1, Math.min(2, store.get('wgolf-players', 1)));
+let players = [], cur = 0;
+function newPlayer(i){ return {i, name: 'Player ' + (i + 1), color: PCOL[i], ball: null, lie: 'tee', strokes: 0, scores: [], lastPos: null, done: false, cal: {full: 1100, putt: 300}, faces: i === 0 ? recentFaces.slice() : []}; }
+// the current player's values live in the usual variables; these move them in and out
+function savePlayer(){ const p = players[cur]; if (!p) return; Object.assign(p, {ball, lie, strokes, scores, lastPos}); p.cal = {...cal}; p.faces = recentFaces.slice(); }
+function loadPlayer(i){ cur = i; const p = players[i]; ({ball, lie, strokes, scores, lastPos} = p); cal.full = p.cal.full; cal.putt = p.cal.putt; recentFaces.length = 0; recentFaces.push(...p.faces); phoneOk = phones[i].ok; }
 
 // ---------- phone link ----------
 const ALPH = 'abcdefghjkmnpqrstuvwxyz23456789';
 const rnd = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => ALPH[b % ALPH.length]).join('');
-let peer = null, conn = null, tries = 0, phoneOk = false, qrImg = '';
+let peer = null, tries = 0, phoneOk = false, qrImg = '';
+const phones = [{conn: null, ok: false, last: 0}, {conn: null, ok: false, last: 0}];   // one per player
 function linkChip(t, k){ const c = $('#linkChip'); $('#linkTxt').textContent = t; c.className = 'chip' + (k ? ' ' + k : ''); pairStatus(); }
 // live link light: green and pulsing while swing data is arriving from the phone
-let lastMotion = 0;
 function pairStatus(){
-  const live = phoneOk && performance.now() - lastMotion < 1500;
-  for (const id of ['#liveDot', '#pairDot', '#gDot']){ const d = $(id); if (d) d.classList.toggle('on', live); }
-  const t = !phoneOk ? 'Waiting for your phone… scan the code, then tap Start.' : live ? 'Phone linked and sending your swing. You\'re ready.' : 'Phone linked. On the phone, tap Start and allow motion.';
+  const now = performance.now(), live = i => phones[i].ok && now - phones[i].last < 1500;
+  const anyLive = [0, 1].slice(0, nPlayers).some(live);
+  for (const id of ['#liveDot', '#pairDot', '#gDot']){ const d = $(id); if (d) d.classList.toggle('on', id === '#liveDot' ? live(cur) : anyLive); }
+  const one = i => !phones[i].ok ? 'waiting… scan the code, then tap Start' : live(i) ? 'linked and sending swings ✓' : 'linked: tap Start on the phone and allow motion';
+  const t = nPlayers === 2 ? `Player 1: ${one(0)}. Player 2: ${one(1)}.`
+    : !phones[0].ok ? 'Waiting for your phone… scan the code, then tap Start.' : live(0) ? 'Phone linked and sending your swing. You\'re ready.' : 'Phone linked. On the phone, tap Start and allow motion.';
   for (const id of ['#pairTxt', '#gTxt']){ const e = $(id); if (e) e.textContent = t; }
-  if ($('#gNext') && guide.step === 1) $('#gNext').disabled = !phoneOk;
+  if ($('#gNext') && guide.step === 1) $('#gNext').disabled = !phones[0].ok;
 }
 setInterval(pairStatus, 700);
 function startPeer(id){
@@ -64,27 +75,45 @@ function showQR(id){
   $('#qrLink').textContent = url;
   try { const q = qrcode(0, 'M'); q.addData(url); q.make(); qrImg = q.createImgTag(5, 0); $('#qr').innerHTML = qrImg; const g = $('#gQr'); if (g) g.innerHTML = qrImg; } catch {}
 }
+// Each phone that links takes the next free player slot (with one player, a new phone replaces the old).
 function attach(c){
-  if (conn && conn !== c){ try { conn.close(); } catch {} }
-  conn = c;
-  c.on('open', () => { phoneOk = true; linkChip('Linked', 'ok'); sendState(); send({t:'club', club}); if (!$('#pairModal').hidden) window.setTimeout(() => { if (phoneOk) $('#pairModal').hidden = true; }, 2500); });
-  c.on('data', onPhone);
-  c.on('close', () => { if (c !== conn) return; phoneOk = false; linkChip('Phone not linked', 'bad'); });
+  const free = i => !(phones[i].conn && phones[i].conn.open && phones[i].conn !== c);
+  const want = c.metadata && Number.isInteger(c.metadata.slot) ? c.metadata.slot : -1;   // a phone coming back asks for its old slot
+  let k = want >= 0 && want < nPlayers && free(want) ? want : [0, 1].slice(0, nPlayers).find(free);
+  if (k == null) k = nPlayers - 1;
+  const old = phones[k].conn; if (old && old !== c){ try { old.close(); } catch {} }
+  phones[k].conn = c;
+  c.on('open', () => { phones[k].ok = true; if (k === cur) phoneOk = true; linkLabel(); sendTo(k, {t:'you', n: k + 1, of: nPlayers, color: PCOL[k]}); if (k === cur){ sendState(); sendTo(k, {t:'club', club}); } else if (players[cur] && hole) sendTo(k, {t:'state', text: `${players[cur].name} is playing. Wait for your turn.`, mode: 'wait'});
+    if (!$('#pairModal').hidden && [0, 1].slice(0, nPlayers).every(i => phones[i].ok)) window.setTimeout(() => { $('#pairModal').hidden = true; }, 2500); });
+  c.on('data', m => onPhone(m, k));
+  c.on('close', () => { if (c !== phones[k].conn) return; phones[k].ok = false; if (k === cur) phoneOk = false; linkLabel(); });
 }
-function send(m){ if (conn && conn.open){ try { conn.send(m); } catch {} } }
-function onPhone(m){
+function pairText(){
+  const li = $('#pairLi1'); if (li) li.innerHTML = nPlayers === 2 ? 'Two players: <b>each</b> scan this code with your own phone and open the link. The first phone is Player 1.' : "Scan this code with your phone's camera and open the link.";
+  const h = $('#pairModal h2'); if (h) h.textContent = nPlayers === 2 ? 'Link both phones' : 'Link your phone';
+}
+function linkLabel(){
+  if (nPlayers === 1) return phones[0].ok ? linkChip('Linked', 'ok') : linkChip('Phone not linked', 'bad');
+  const all = phones[0].ok && phones[1].ok; linkChip(`P1 ${phones[0].ok ? '✓' : '…'}  P2 ${phones[1].ok ? '✓' : '…'}`, all ? 'ok' : 'bad');
+}
+function sendTo(i, m){ const c = phones[i] && phones[i].conn; if (c && c.open){ try { c.send(m); } catch {} } }
+function send(m){ sendTo(cur, m); }
+function onPhone(m, k = 0){
   if (!m || typeof m !== 'object') return;
+  if (m.t === 'm'){ phones[k].last = performance.now(); if (k === cur) meter.fromPhone(Number(m.r) || 0, !!m.h); return; }
+  if (m.t === 'ping'){ sendTo(k, {t:'pong', at: m.at}); return; }
+  if (m.t === 'status'){ if (Number(m.v) !== VERSION){ linkChip('Phone page out of date: scan again', 'bad'); $('#pairModal').hidden = false; } return; }
+  if (m.t === 'cal'){ if (k === 0) guide.onCal(m); const pc = players[k] ? players[k].cal : null;
+    for (const c of [pc, k === cur ? cal : null]) if (c){ if (m.full) c.full = Number(m.full) || c.full; if (m.puttFull) c.putt = Number(m.puttFull) || c.putt; } return; }
+  // only the player whose turn it is can swing, aim or change club
+  if (k !== cur){ if (m.t === 'swing' && !m.cal) sendTo(k, {t:'state', text: `${players[cur] ? players[cur].name : 'Player ' + (cur + 1)} is playing. Wait for your turn.`}); return; }
   switch (m.t){
-    case 'ping': send({t:'pong', at: m.at}); break;
-    case 'status': if (Number(m.v) !== VERSION){ linkChip('Phone page out of date: scan again', 'bad'); $('#pairModal').hidden = false; } break;
     case 'club': if (CLUBS[m.club] && mode === 'aim'){ setClub(m.club); } send({t:'club', club}); break;   // echo so the phone shows the club in play
     case 'read': toggleRead(); break;
     case 'aim': aimHeld = m.on ? (m.d < 0 ? 1 : -1) : 0; break;   // ◀ (d = -1) turns the aim left
     case 'view': toggleMap(); break;
     case 'swing': if (!m.cal) onSwing(m); break;
-    case 'm': lastMotion = performance.now(); meter.fromPhone(Number(m.r) || 0, !!m.h); break;
     case 'spin': setSpin(Number(m.top) || 0, Number(m.side) || 0, true); break;
-    case 'cal': guide.onCal(m); if (m.full) cal.full = Number(m.full) || cal.full; if (m.puttFull) cal.putt = Number(m.puttFull) || cal.putt; break;
   }
 }
 
@@ -103,29 +132,48 @@ function startRound(id, resume, spec = 'all'){
   if (!store.get('wgolf-onboarded', false) && !guide.open){ guide.show(0, {id, resume, spec}); return; }
   if (scene && scene.course.d.id !== id){ try { sessionStorage.setItem('wgolf-start', JSON.stringify({id, resume, spec})); } catch {} location.reload(); return; }
   GolfSound.unlock();
+  // the aerial photo for the ground: load it first (a few MB), then carry on
+  const ph = window.COURSES[id].photo;
+  if (ph && !ph.img){
+    const im = new Image(); ph.img = 'loading'; toast('Loading the course…', 6000);
+    im.onload = () => { ph.img = im; startRound(id, resume, spec); };
+    im.onerror = () => { ph.img = 'failed'; startRound(id, resume, spec); };
+    im.src = ph.src + '?v=' + VERSION; return;
+  }
+  if (ph && ph.img === 'loading') return;
   course = new GolfGeo.Course(window.COURSES[id]);
   course.terrain = window.ELEV && ELEV[id] ? new GolfTerrain.Terrain(ELEV[id]) : GolfTerrain.Flat;
   if (!scene){ scene = new GolfScene($('#view'), course); }
   const saved = store.get('wgolf-round', null);
   let first;
-  if (resume && saved && saved.course === id){ scores = saved.scores; roundHoles = saved.holes || holesFor('all', course.d.holes.length); roundName = saved.name || '18 holes'; first = saved.hole; }
-  else { scores = []; roundHoles = holesFor(spec, course.d.holes.length); roundName = roundLabel(spec); first = roundHoles[0]; }
+  if (resume && saved && saved.course === id){
+    nPlayers = saved.players ? saved.players.length : 1; players = Array.from({length: nPlayers}, (_, i) => newPlayer(i));
+    players.forEach((p, i) => { p.scores = saved.players ? saved.players[i] : saved.scores; });
+    roundHoles = saved.holes || holesFor('all', course.d.holes.length); roundName = saved.name || '18 holes'; first = saved.hole;
+  } else { players = Array.from({length: nPlayers}, (_, i) => newPlayer(i)); roundHoles = holesFor(spec, course.d.holes.length); roundName = roundLabel(spec); first = roundHoles[0]; }
+  players.forEach((p, i) => { p.cal = i === cur ? {...cal} : p.cal; });
+  loadPlayer(0); pairText(); linkLabel();
   $('#menu').hidden = true; $('#hud').hidden = false;
-  if (!phoneOk && !store.get('wgolf-keyboard', false)) $('#pairModal').hidden = false;
+  if ((!phones[0].ok || (nPlayers === 2 && !phones[1].ok)) && !store.get('wgolf-keyboard', false)) $('#pairModal').hidden = false;
   startHole(first);
 }
-function saveRound(){ store.set('wgolf-round', {course: course.d.id, hole: holeIdx, scores, holes: roundHoles, name: roundName, at: Date.now()}); }
+function saveRound(){ savePlayer(); store.set('wgolf-round', {course: course.d.id, hole: holeIdx, scores: players[0].scores, players: players.map(p => p.scores), holes: roundHoles, name: roundName, at: Date.now()}); }
 
 function startHole(i){
-  holeIdx = i; hole = course.d.holes[i]; strokes = 0; lie = 'tee'; mapView = false;
+  holeIdx = i; hole = course.d.holes[i]; mapView = false;
+  savePlayer();
+  const prev = roundHoles[roundHoles.indexOf(i) - 1];
+  players.forEach(p => { p.ball = hole.tee.slice(); p.lie = 'tee'; p.strokes = 0; p.done = false; p.lastPos = hole.tee.slice(); p.order = prev != null && p.scores[prev] != null ? p.scores[prev] : 0; });
+  const honour = players.slice().sort((a, b) => a.order - b.order || a.i - b.i)[0].i;
+  loadPlayer(honour);
   const r = GolfGeo.rng(1000 + i * 37 + new Date().getDate());
   // pin: a few metres from the green's centre, still on the green
   const g = course.greens[hole.green].a, gc = GolfGeo.centroid(g);
   pin = gc.slice();
   for (let k = 0; k < 12; k++){ const a = r() * Math.PI * 2, d = 2 + r() * 4, p = [gc[0] + Math.cos(a)*d, gc[1] + Math.sin(a)*d];
     if (GolfGeo.pip(p[0], p[1], g) && GolfGeo.edgeDist(p[0], p[1], g) > 3){ pin = p; break; } }
-  const wa = r() * Math.PI * 2, ws = settings.wind ? r() * 10 : 0;   // 0-10 m/s, like Wii golf windV = [Math.cos(wa) * ws, Math.sin(wa) * ws];
-  ball = hole.tee.slice(); lastPos = ball.slice();
+  // a new wind every hole: a whole number from 1 to 10 m/s, from any direction (like Wii golf)
+  const wa = Math.random() * Math.PI * 2, ws = settings.wind ? 1 + Math.floor(Math.random() * 10) : 0; windV = [Math.cos(wa) * ws, Math.sin(wa) * ws];
   scene.setPin(pin[0], pin[1]); scene.setBall(ball[0], ball[1]);
   // hole intro: show the whole hole from above, then drop behind the ball
   const c = [(hole.tee[0] + pin[0]) / 2, (hole.tee[1] + pin[1]) / 2];
@@ -156,10 +204,26 @@ function autoAim(){
   }
   return angTo(ball, best || pin);
 }
+function nextPlayer(){
+  if (players.length < 2) return;
+  savePlayer();
+  const left = players.filter(p => !p.done); if (!left.length) return;
+  const far = left.sort((a, b) => (dist(b.ball, pin) - dist(a.ball, pin)) || (a.i === cur ? -1 : b.i === cur ? 1 : 0)   /* level (on the tee): whoever has the honour */)[0];
+  if (far.i !== cur){ loadPlayer(far.i); }
+}
 function prepareShot(){
   if (mode === 'roundEnd' || mode === 'menu') return;
+  if (players.length > 1){
+    const was = cur; nextPlayer();
+    const P = players[cur];
+    callout(`${P.name}'s turn`, cur ? 'p2' : 'p1');
+    players.forEach((p, i) => { if (i !== cur) sendTo(i, {t:'state', text: `${P.name} is playing. Wait for your turn.`, mode: 'wait'}); });
+    scene.setOthers(players.filter(p => p.i !== cur && !p.done).map(p => ({x: p.ball[0], y: p.ball[1], color: p.color})));
+    void was;
+  }
   club = autoClub(); aim = autoAim(); mode = 'aim'; setSpin(0, 0);
   scene.setBall(ball[0], ball[1]); scene.clearTrail(); scene.placeGolfer(ball, aim, club === 'Pt'); meter.reset();
+  scene.setFlagIn(club !== 'Pt');
   reading = false; scene.showRead(hole.green, false);
   setView();
   updateHUD();
@@ -174,7 +238,7 @@ function setView(){
 }
 function toggleMap(){ if (mode !== 'aim') return; mapView = !mapView; setView(); }
 // any club from any lie, including the putter from the fringe or rough
-function setClub(k){ if (!CLUBS[k]) return; const wasPutt = club === 'Pt'; club = k; if (wasPutt !== (k === 'Pt')){ aim = angTo(ball, k === 'Pt' ? pin : pin); scene.placeGolfer(ball, aim, k === 'Pt'); setView(); } updateHUD(); }
+function setClub(k){ if (!CLUBS[k]) return; const wasPutt = club === 'Pt'; club = k; scene.setFlagIn(k !== 'Pt'); if (wasPutt !== (k === 'Pt')){ aim = angTo(ball, k === 'Pt' ? pin : pin); scene.placeGolfer(ball, aim, k === 'Pt'); setView(); } updateHUD(); }
 // Wii-style green read: coloured grid with downhill arrows on the green you're putting to
 function toggleRead(){
   if (mode !== 'aim' && mode !== 'intro') return;
@@ -262,12 +326,6 @@ function animateFlight(r){
   const dur = 2.3 + r.carry / 80;   // slower, floatier flight like Wii golf
   anim = {kind: 'flight', r, t0: performance.now(), dur, landed: false};
 }
-// The ball keeps its speed into the cup and falls: it runs on toward the far wall, dropping under gravity.
-function startDrop(entry, done){
-  const v = entry || [0.4, 0], sp = Math.max(0.25, Math.min(1.4, Math.hypot(v[0], v[1]))), ux = v[0] / (Math.hypot(v[0], v[1]) || 1), uy = v[1] / (Math.hypot(v[0], v[1]) || 1);
-  const R = GolfPhysics.CUP, from = [pin[0] - ux * R * 0.55, pin[1] - uy * R * 0.55];
-  anim = {kind: 'drop', from, ux, uy, sp, done, t0: performance.now(), rattled: false};
-}
 function animatePutt(r){ anim = {kind: 'putt', r, t0: performance.now()}; }
 // position along a [x, y, h, t] track at time t (seconds)
 function trackAt(T, t){
@@ -278,7 +336,6 @@ function trackAt(T, t){
   const a = T[lo], b = T[hi], k = (t - a[3]) / Math.max(1e-6, b[3] - a[3]);
   return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, t];
 }
-function entrySpeed(T){ const n = T.length; if (n < 3) return [0.5, 0]; const a = T[n - 3], b = T[n - 1], dt = Math.max(0.02, b[3] - a[3]); return [(b[0] - a[0]) / dt, (b[1] - a[1]) / dt]; }
 function stepAnim(now){
   if (!anim) return;
   const t = Math.max(0, (now - anim.t0) / 1000 * SPEED());   // rAF time can be slightly older than t0
@@ -295,24 +352,20 @@ function stepAnim(now){
     const R = r.rollTrack, rt = t - dur, end = R[R.length - 1][3];
     if (rt < end && R.length > 1){
       const p = trackAt(R, rt);
-      if (anim.lastH > 0.03 && p[2] <= 0.03) GolfSound.land(true);
+      if (anim.lastH > 0.03 && p[2] <= 0.03 && p[2] > -0.01) GolfSound.land(true);
+      if (!anim.rattled && p[2] < -0.06){ anim.rattled = true; GolfSound.cup(); }
       anim.lastH = p[2];
       scene.setBall(p[0], p[1], p[2]); scene.view('watch', {ball: p}); return;
     }
-    if (r.holed) return startDrop(entrySpeed(R), () => finishShot(r.rest, r.lie, r.holed, [], r.events, r));
+    if (r.holed){ anim = null; return finishShot(r.rest, r.lie, r.holed, [], r.events, r); }
     anim = null; finishShot(r.rest, r.lie, r.holed, r.samples.concat(R.map(p => [p[0], p[1], 0])), r.events, r);
   } else if (anim.kind === 'putt'){
     const {r} = anim, T = r.track, end = T[T.length - 1][3];
     if (t < end){ const p = trackAt(T, t);
-      scene.setBall(p[0], p[1]); scene.view('address', {ball: [p[0] - Math.cos(aim)*0.01, p[1] - Math.sin(aim)*0.01], ang: aim, putt: true, toPin: dist(p, pin)}); return; }
-    if (r.holed) return startDrop(entrySpeed(T), () => finishShot(r.rest, r.lie, r.holed, [], [], r));
+      if (!anim.rattled && p[2] < -0.06){ anim.rattled = true; GolfSound.cup(); }
+      scene.setBall(p[0], p[1], p[2]); scene.view('address', {ball: [p[0] - Math.cos(aim)*0.01, p[1] - Math.sin(aim)*0.01], ang: aim, putt: true, toPin: dist(p, pin)}); return; }
+    if (r.holed){ anim = null; return finishShot(r.rest, r.lie, r.holed, [], [], r); }
     anim = null; finishShot(r.rest, r.lie, r.holed, T.map(p => [p[0], p[1], 0]), r.lip ? ['lip'] : [], r);
-  } else if (anim.kind === 'drop'){
-    // carries on over the lip at its own speed, falls under gravity, and stops against the far wall
-    const {from, ux, uy, sp, done} = anim, R = GolfPhysics.CUP, run = Math.min(sp * t, R * 1.1), z = -Math.min(0.105, 4.9 * t * t);
-    scene.setBall(from[0] + ux * run, from[1] + uy * run, z);
-    if (!anim.rattled && z <= -0.06){ anim.rattled = true; GolfSound.cup(); }
-    if (t > 0.32){ anim = null; done(); }
   }
 }
 
@@ -364,11 +417,13 @@ function finishShot(rest, newLie, holed, track, events, r = {}){
 const NAMES = {'-3':'Albatross!', '-2':'Eagle!', '-1':'Birdie!', '0':'Par', '1':'Bogey', '2':'Double bogey', '3':'Triple bogey'};
 function holeOut(){
   mode = 'holeEnd';
-  scores[holeIdx] = strokes; saveRound();
+  scores[holeIdx] = strokes; players[cur].done = true; saveRound();
   const diff = strokes - hole.par;
   const name = strokes === 1 ? 'Hole in one!' : NAMES[diff] || (diff > 0 ? `+${diff}` : `${diff}`);
   if (strokes === 1){ callout('Hole in One!', 'gold'); GolfSound.cheer(2); } else if (diff < 0){ window.setTimeout(() => callout(name, 'gold'), 600); GolfSound.cheer(diff < -1 ? 2 : 1); }
-  showCard(name, `${strokes} ${strokes === 1 ? 'stroke' : 'strokes'} on hole ${hole.n}`, 2600);
+  showCard(players.length > 1 ? `${players[cur].name}: ${name}` : name, `${strokes} ${strokes === 1 ? 'stroke' : 'strokes'} on hole ${hole.n}`, 2600);
+  if (players.some(p => !p.done)){ updateHUD(); later(prepareShot, 2800); return; }   // the other player still has to finish the hole
+  scene.setOthers([]);
   updateHUD(); send({t:'state', text: `${name} ${strokes} on hole ${hole.n}`, mode});
   later(() => {
     const k = roundHoles.indexOf(holeIdx);
@@ -377,9 +432,9 @@ function holeOut(){
       mode = 'roundEnd'; store.set('wgolf-round', null);
       // personal best for this course and round
       const t = totals(), key = `wgolf-best-${course.d.id}-${roundName}`, best = store.get(key, null);
-      if (roundHoles.every(i => scores[i] != null) && (best == null || t.s < best)){ store.set(key, t.s); if (best != null){ callout('New personal best!', 'gold'); GolfSound.cheer(2); } }
+      if (players.length === 1 && roundHoles.every(i => scores[i] != null) && (best == null || t.s < best)){ store.set(key, t.s); if (best != null){ callout('New personal best!', 'gold'); GolfSound.cheer(2); } }
       showScorecard(true);
-      if (best != null) $('#scoreSum').textContent += ` Your best: ${Math.min(best, t.s)}.`;
+      if (best != null && players.length === 1) $('#scoreSum').textContent += ` Your best: ${Math.min(best, t.s)}.`;
     }
   }, 2800);
 }
@@ -431,6 +486,7 @@ function totals(){ let s = 0, p = 0; course.d.holes.forEach((h, i) => { if (scor
 function updateHUD(){
   if (!hole) return;
   const C = CLUBS[club], d = dist(ball, pin);
+  const tag = $('#hPlayer'); tag.hidden = players.length < 2; if (players.length > 1){ tag.textContent = players[cur].name; tag.style.background = players[cur].color; }
   $('#hHole').textContent = hole.n; $('#hPar').textContent = `Par ${hole.par} · ${hole.card || hole.len} m`;
   $('#hStroke').textContent = mode === 'aim' ? `Shot ${strokes + 1}` : `Shot ${strokes}`;
   const t = totals(), tp = t.s - t.p; $('#hTotal').textContent = t.p ? (tp === 0 ? 'E' : tp > 0 ? '+' + tp : tp) : 'E';
@@ -440,7 +496,7 @@ function updateHUD(){
   $('#hClub').textContent = C.name;
   $('#hClubMax').textContent = C.putt ? `Putter range ${puttMax()} m` : `Up to ${Math.round(C.max * GolfPhysics.lieFactor(lie, club))} m`;
   const ws = Math.hypot(windV[0], windV[1]);
-  $('#hWind').textContent = ws < 0.3 ? 'Calm' : `${ws.toFixed(1)} m/s`;
+  $('#hWind').textContent = ws < 0.3 ? 'Calm' : `${Math.round(ws)} m/s`;
   $('#windArrow').style.transform = `rotate(${(aim - Math.atan2(windV[1], windV[0])) * 180 / Math.PI}deg)`;
   $('#windArrow').style.opacity = ws < 0.3 ? 0.25 : 1;
   if (mode === 'aim'){
@@ -454,11 +510,20 @@ function updateHUD(){
 function showScorecard(final){
   const idx = roundHoles.length ? roundHoles : course.d.holes.map((h, i) => i), holes = idx.map(i => course.d.holes[i]);
   const row = (label, f, cls = '') => `<tr class="${cls}"><th>${label}</th>${holes.map((h, i) => `<td class="${f.cls ? f.cls(h, i) : ''}"><span>${f(h, i)}</span></td>`).join('')}</tr>`;
-  const sc = (h, i) => scores[idx[i]] == null ? '' : scores[idx[i]];
-  sc.cls = (h, i) => scores[idx[i]] == null ? '' : scores[idx[i]] < h.par ? 'under' : scores[idx[i]] > h.par ? 'over' : 'par';
-  const t = totals(), tp = t.s - t.p;
-  $('#scoreTable').innerHTML = `<table>${row('Hole', h => h.n)}${row('Metres', h => h.len, 'dim')}${row('Par', h => h.par)}${row('Score', sc)}</table>`;
-  $('#scoreSum').textContent = t.p ? `${t.s} strokes, ${tp === 0 ? 'level par' : tp > 0 ? tp + ' over par' : -tp + ' under par'}` : 'No holes finished yet.';
+  savePlayer();
+  const scoreRow = S => { const f = (h, i) => S[idx[i]] == null ? '' : S[idx[i]]; f.cls = (h, i) => S[idx[i]] == null ? '' : S[idx[i]] < h.par ? 'under' : S[idx[i]] > h.par ? 'over' : 'par'; return f; };
+  const tot = S => { let s = 0, p = 0; idx.forEach(i => { if (S[i] != null){ s += S[i]; p += course.d.holes[i].par; } }); return {s, p}; };
+  const vsPar = t => { const d = t.s - t.p; return d === 0 ? 'level par' : d > 0 ? d + ' over par' : -d + ' under par'; };
+  const multi = players.length > 1;
+  const rows = multi ? players.map(P => row(`<i style="background:${P.color}"></i>${P.name.replace('Player ', 'P')}`, scoreRow(P.scores), 'pl')).join('') : row('Score', scoreRow(scores));
+  $('#scoreTable').innerHTML = `<table>${row('Hole', h => h.n)}${row('Metres', h => h.len, 'dim')}${row('Par', h => h.par)}${rows}</table>`;
+  if (multi){
+    const T = players.map(P => tot(P.scores));
+    let sum = T.some(t => t.p) ? players.map((P, i) => `${P.name}: ${T[i].s} (${vsPar(T[i])})`).join(' · ') : 'No holes finished yet.';
+    if (final && T[0].s !== T[1].s) sum += ` · ${players[T[0].s < T[1].s ? 0 : 1].name} wins!`;
+    else if (final) sum += ' · All square!';
+    $('#scoreSum').textContent = sum;
+  } else { const t = tot(scores); $('#scoreSum').textContent = t.p ? `${t.s} strokes, ${vsPar(t)}` : 'No holes finished yet.'; }
   $('#scoreTitle').textContent = (final ? 'Round complete' : 'Scorecard') + ` · ${course.d.name} · ${roundName}`;
   $('#scoreNew').hidden = !final;
   $('#scoreModal').hidden = false;
@@ -555,7 +620,7 @@ const guide = {
   ],
   show(step = 0, pending = null){ this.open = true; this.pending = pending || this.pending; $('#guide').hidden = false; this.go(step); },
   go(i){
-    if (this.step === 2 && i !== 2 && this.calCount < 3) send({t:'calibrate', cancel: true});   // leaving setup half-way: stop it on the phone
+    if (this.step === 2 && i !== 2 && this.calCount < 3) sendTo(0, {t:'calibrate', cancel: true});   // leaving setup half-way: stop it on the phone
     this.step = Math.max(0, Math.min(this.steps.length - 1, i)); const S = this.steps[this.step];
     $('#gTitle').textContent = S.title; $('#gBody').innerHTML = S.body();
     [...$('#gSteps').children].forEach((el, k) => el.classList.toggle('on', k <= this.step));
@@ -564,20 +629,20 @@ const guide = {
     $('#gSkip').textContent = this.step === 0 ? 'Play with keyboard' : 'Skip setup';
     $('#gNext').disabled = false;
     if (this.step === 1) pairStatus();
-    if (this.step === 2){ this.calCount = 0; this.paintCal(phoneOk ? 'Swing when you\'re ready.' : 'No phone linked: you can skip this.'); if (phoneOk) send({t:'calibrate', mode: 'full'}); }
+    if (this.step === 2){ this.calCount = 0; this.paintCal(phones[0].ok ? 'Swing when you\'re ready.' : 'No phone linked: you can skip this.'); if (phones[0].ok) sendTo(0, {t:'calibrate', mode: 'full'}); }
   },
   paintCal(t){ const d = $('#gCal'); if (d) [...d.children].forEach((el, k) => el.classList.toggle('on', k < this.calCount)); const tt = $('#gCalTxt'); if (tt && t) tt.textContent = t; },
   onCal(m){ if (!this.open || this.step !== 2) return;
     if (m.cancelled){ this.paintCal('Cancelled on the phone.'); return; }
     if (m.step != null){ this.calCount = m.step; this.paintCal(m.step >= 3 ? 'Saved. That\'s your 100%.' : `Swing ${m.step} of 3 done.`); if (m.step >= 3) window.setTimeout(() => this.open && this.step === 2 && this.go(3), 1200); } },
   finish(keyboard){
-    if (this.step === 2 && this.calCount < 3) send({t:'calibrate', cancel: true});
+    if (this.step === 2 && this.calCount < 3) sendTo(0, {t:'calibrate', cancel: true});
     store.set('wgolf-onboarded', true); if (keyboard) store.set('wgolf-keyboard', true);
     $('#guide').hidden = true; this.open = false; const p = this.pending; this.pending = null;
     if (p) startRound(p.id, p.resume, p.spec);
   }
 };
-$('#gNext').onclick = () => { if (guide.step === guide.steps.length - 1) guide.finish(false); else guide.go(guide.step + (guide.step === 1 && !phoneOk ? 2 : 1)); };
+$('#gNext').onclick = () => { if (guide.step === guide.steps.length - 1) guide.finish(false); else guide.go(guide.step + (guide.step === 1 && !phones[0].ok ? 2 : 1)); };
 $('#gBack').onclick = () => guide.go(guide.step - 1);
 $('#gSkip').onclick = () => guide.finish(guide.step === 0);
 
@@ -596,6 +661,7 @@ function initMenu(){
     el.querySelector('.play').onclick = () => startRound(id, false, sel ? sel.value : 'all');
     rb.onclick = () => startRound(id, true);
   });
+  const ps = $('#playersSel'); if (ps){ ps.value = String(nPlayers); ps.onchange = () => { nPlayers = Number(ps.value) === 2 ? 2 : 1; store.set('wgolf-players', nPlayers); pairText(); linkLabel(); }; }
   const ds = $('#diffSel'); if (ds){ ds.value = settings.difficulty; ds.onchange = () => { store.set('wgolf-difficulty', ds.value); GolfPhysics.setDifficulty(ds.value); if (hole) updateHUD(); }; }
   const mt = $('#muteChk'); if (mt){ mt.checked = !GolfSound.muted; mt.onchange = () => GolfSound.setMuted(!mt.checked); }
   $('#menuBtn').onclick = () => { $('#menu').hidden = false; $('#hud').hidden = true; mode = 'menu'; initMenu(); };
@@ -606,11 +672,11 @@ function initMenu(){
   $('#pairBtn').onclick = () => { $('#pairModal').hidden = false; };
   $('#pairClose').onclick = () => { $('#pairModal').hidden = true; };
   $('#pairKeys').onclick = () => { store.set('wgolf-keyboard', true); $('#pairModal').hidden = true; toast('Hold Space to swing, arrows to aim and change club.', 3500); };
-  $('#pairReset').onclick = () => { try { peer && peer.destroy(); } catch {} phoneOk = false; linkChip('Phone not linked', 'bad'); $('#qr').textContent = 'Making a code…'; store.set('wgolf-screen-id', null); tries = 0; startPeer('wgolf-' + rnd(6)); };
+  $('#pairReset').onclick = () => { try { peer && peer.destroy(); } catch {} phoneOk = false; phones.forEach(p => { p.ok = false; p.conn = null; }); linkChip('Phone not linked', 'bad'); $('#qr').textContent = 'Making a code…'; store.set('wgolf-screen-id', null); tries = 0; startPeer('wgolf-' + rnd(6)); };
   $('#guideBtn').onclick = () => guide.show(0, null);
   $('#mapBtn').onclick = toggleMap; $('#readBtn').onclick = toggleRead;
   const cs = $('#curveSel'); cs.value = settings.curve; cs.onchange = () => store.set('wgolf-curve', cs.value);
-  const wc = $('#windChk'); wc.checked = settings.wind; wc.onchange = () => store.set('wgolf-wind', wc.checked);
+  const wc = $('#windChk'); wc.checked = settings.wind; wc.onchange = () => store.set('wgolf-wind2', wc.checked);
   $('#ver').textContent = 'Version ' + VERSION;
   // a course picked before a reload
   let pick = null; try { pick = JSON.parse(sessionStorage.getItem('wgolf-start') || 'null'); sessionStorage.removeItem('wgolf-start'); } catch {}
@@ -622,5 +688,5 @@ initMenu();
 startPeer(store.get('wgolf-screen-id', null) || ('wgolf-' + rnd(6)));
 requestAnimationFrame(loop);
 // for automated tests
-window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, get scene(){ return scene; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound, startHole, get roundHoles(){ return roundHoles; }};
+window.__golf = {get mode(){ return mode; }, get ball(){ return ball; }, get pin(){ return pin; }, get strokes(){ return strokes; }, get scores(){ return scores; }, get hole(){ return holeIdx; }, get club(){ return club; }, get lie(){ return lie; }, get course(){ return course; }, get scene(){ return scene; }, takeShot: (p, f) => takeShot(p, f || 0, false), startRound, startHole, get roundHoles(){ return roundHoles; }, get players(){ savePlayer(); return players.map(p => ({name: p.name, scores: p.scores.slice(), ball: p.ball})); }, get cur(){ return cur; }};
 })();

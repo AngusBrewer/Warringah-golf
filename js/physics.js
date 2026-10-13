@@ -16,9 +16,9 @@ const CLUBS = {
 };
 const ORDER = ['Dr','3W','5i','7i','9i','PW','SW','Pt'];
 // the cup is drawn bigger than real (like Wii golf), so it catches a little more
-const CUP = 0.12;
-const BALL_R = 0.035;            // the ball's radius for lip contact (drawn about twice real size)
-const PUTT_MAX = 24;
+const CUP = 0.132;           // 10% bigger again in version 14
+const BALL_R = 0.035;            // the ball's radius for rim contact (drawn about twice real size)
+const PUTT_MAX = 26;
 const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', rough:'Rough', bunker:'Bunker', water:'Water', ob:'Out of bounds'};
 
 // ---- difficulty: changes the game, not just the labels ----
@@ -48,15 +48,16 @@ function lieRange(lie, club){
 function lieFactor(lie, club){ const r = lieRange(lie, club); return (r[0] + r[1]) / 2; }
 // The putter's range steps up with the length of the putt (as in Wii golf), so a full stroke on a short
 // putt only goes a little past the hole instead of off the green.
-const PUTT_RANGES = [3, 6, 10, 15, 24];
-function puttRange(d){ for (const r of PUTT_RANGES) if (r >= d * 1.3) return r; return PUTT_RANGES[PUTT_RANGES.length - 1]; }
+// A natural, medium stroke (about 60%) gets a putt to the hole; a full one sends it well past.
+const PUTT_RANGES = [3, 5, 8, 11, 15, 20, 26];
+function puttRange(d){ for (const r of PUTT_RANGES) if (r >= d * 1.6) return r; return PUTT_RANGES[PUTT_RANGES.length - 1]; }
 
 // ---- the ground: bounce and rolling resistance per lie ----
 // e: how much of the vertical speed comes back up; keep: horizontal speed kept per bounce;
 // mu: rolling resistance (deceleration = mu * g). Greens are quick, rough grabs the ball.
 const SURF = {
-  green:   {e: 0.22, keep: 0.5,  mu: 0.046},
-  fringe:  {e: 0.26, keep: 0.55, mu: 0.08},
+  green:   {e: 0.22, keep: 0.6,  mu: 0.052},
+  fringe:  {e: 0.26, keep: 0.62, mu: 0.08},
   fairway: {e: 0.34, keep: 0.65, mu: 0.12},
   tee:     {e: 0.34, keep: 0.65, mu: 0.12},
   rough:   {e: 0.16, keep: 0.45, mu: 0.18},
@@ -76,41 +77,90 @@ function slopePull(course, field, lie, x, y){
   return [-g[0] * k, -g[1] * k];
 }
 
-// The cup. Called every step of a roll. When the ball first reaches the hole, its line decides what
-// happens: through the middle and slow enough it drops; too fast it hops over; catching the edge it
-// can curl in (lip-in) or spin out round the rim (lip-out). Returns null to keep rolling.
-function cupContact(st, cup){
-  const dx = st.x - cup[0], dy = st.y - cup[1], dc = Math.hypot(dx, dy), sp = Math.hypot(st.vx, st.vy);
-  const outer = CUP + BALL_R * 0.6, inner = CUP - BALL_R * 0.4;
-  if (st.willHole){ if (dc < CUP * 0.55 || sp < 0.05) return {holed: true, lipIn: st.willHole === 'lip'}; return null; }
-  if (dc > outer){ st.atCup = false; return null; }
-  if (st.atCup) return null;                     // already decided on this pass
-  st.atCup = true;
-  const b = sp > 1e-6 ? Math.abs(dx * st.vy - dy * st.vx) / sp : dc;   // how close its line passes to the middle
-  const toward = -(dx * st.vx + dy * st.vy) > 0;
-  if (!toward && dc > inner) return null;          // rolling away along the edge
-  if (b < inner){
-    if (sp < 1.5){ st.willHole = 'in'; return null; }
-    if (sp < 2.1 && Math.random() < 0.45 * D.lipIn){ st.willHole = 'lip'; st.vx *= 0.6; st.vy *= 0.6; return null; }   // hits the back wall and drops
-    st.vx *= 0.7; st.vy *= 0.7; st.lip = 'over'; return {lip: 'over'};                                                   // too quick: hops over
+// ---- the cup, as real physics ----
+// The ball rolls on the green until its centre passes over the hole. From then on it is in the air:
+// it falls under gravity while carrying its speed, and bumps off the rim (the cup's top edge), the cup
+// wall and the flagstick like a real ball would. Slow and through the middle it simply drops; firm and
+// central it hits the back wall and falls; too quick it skims across and jumps the far lip; catching
+// the side, the rim turns it and it can curl in (lip-in) or spin out (lip-out). No dice rolls.
+const CUP_DEPTH = 0.105;         // how far the ball's centre can sink (the drawn cup is 11 cm deep)
+const FLAG_R = 0.0125, FLAG_H = 2.1;
+// The cup and ball are drawn bigger than real, so the fall is scaled to keep real capture speeds:
+// a putt dead at the middle drops up to about 1.6 m/s (as measured on real greens), less off-centre;
+// with the flagstick in (chips and full shots) a central ball holds up to about 2.8 m/s.
+const CUP_G = 2.5;
+function cupStep(st, cup, dt, flag){
+  const Rc = CUP, Rb = BALL_R, g = CUP_G * D.lipIn;
+  st.vz += g * dt; st.z += st.vz * dt; st.x += st.vx * dt; st.y += st.vy * dt;
+  let dx = st.x - cup[0], dy = st.y - cup[1], dc = Math.hypot(dx, dy);
+  const ux = dc > 1e-9 ? dx / dc : 1, uy = dc > 1e-9 ? dy / dc : 0;
+  const hit = (nx, ny, nz, e, fric, kind) => {   // bounce off a surface with normal n (z up)
+    const vup = -st.vz, vn = st.vx * nx + st.vy * ny + vup * nz;
+    if (vn >= 0) return false;
+    if (vn > -0.25){ e = 0; fric = 1; }          // a gentle touch rolls along the edge rather than bouncing
+    let vx = st.vx - (1 + e) * vn * nx, vy = st.vy - (1 + e) * vn * ny, vu = vup - (1 + e) * vn * nz;
+    const vn2 = vx * nx + vy * ny + vu * nz;     // friction on the sliding part
+    vx = vn2 * nx + (vx - vn2 * nx) * fric; vy = vn2 * ny + (vy - vn2 * ny) * fric; vu = vn2 * nz + (vu - vn2 * nz) * fric;
+    st.vx = vx; st.vy = vy; st.vz = -vu; st.contacts = (st.contacts || 0) + 1; if (kind) st[kind] = true; return true;
+  };
+  // the flagstick (it stays in, as most golfers now leave it): soaks up pace, so the ball drops
+  if (flag && dc < FLAG_R + Rb && Rb - st.z < FLAG_H){
+    const push = FLAG_R + Rb - dc; st.x += ux * push; st.y += uy * push; dc = FLAG_R + Rb;
+    hit(ux, uy, 0, 0.3, 0.7, 'flagHit');
   }
-  const depth = 1 - (b - inner) / (outer - inner);  // 1 = well over the rim, 0 = only just touching
-  if (sp < 1.1 && Math.random() < (0.15 + 0.6 * depth) * (1 - sp / 1.6) * D.lipIn){
-    // curls in off the rim
-    st.willHole = 'lip'; const k = Math.max(0.3, sp * 0.6) / Math.max(dc, 1e-6); st.vx = -dx * k; st.vy = -dy * k; return null;
+  if (dc < Rc){
+    // the rim edge (a circle at ground level) or, once the ball is below it, the cup wall
+    const hc = Rb - st.z, gh = Rc - dc, vz = Math.max(0, hc), d = Math.hypot(gh, vz);
+    if (d < Rb && d > 1e-9){
+      const nx = -ux * gh / d, ny = -uy * gh / d, nz = vz / d, push = Rb - d;
+      st.x += nx * push; st.y += ny * push; st.z -= nz * push;
+      hit(nx, ny, nz, hc > 0 ? 0.45 : 0.3, 0.85, hc > 0 ? 'rimHit' : 'wallHit');
+    }
+    if (st.z >= CUP_DEPTH){ st.z = CUP_DEPTH; st.vz = 0; st.vx *= 0.5; st.vy *= 0.5; }   // the bottom
+  } else if (st.z > 0){
+    // outside the hole but below ground level: it has hit the edge from inside; sit it on the rim
+    st.z = 0; if (st.vz > 0) st.vz = 0;
   }
-  // spins out round the rim: turned away from the cup and slowed
-  const side = Math.sign(dx * st.vy - dy * st.vx) || 1, turn = -side * (0.5 + depth * 0.7), c = Math.cos(turn), s = Math.sin(turn);
-  [st.vx, st.vy] = [(st.vx * c - st.vy * s) * 0.55, (st.vx * s + st.vy * c) * 0.55];
-  st.lip = 'out'; return {lip: 'out'};
+  return Math.hypot(st.x - cup[0], st.y - cup[1]);
 }
 
 // Roll the ball along the ground from (x, y) with velocity (vx, vy), on real slopes, until it stops.
-// track gets [x, y, height, time] points. Used for run-out after full shots and for putts.
+// track gets [x, y, height, time] points (height < 0 = below the rim, in the cup). Used for run-out
+// after full shots and for putts. st.z/st.vz (optional): it starts in the air above the hole.
 function roll(course, st, opts){
-  const dt = 1 / 120, track = opts.track, field = opts.field;
+  const dt = 1 / 120, track = opts.track, field = opts.field, pin = opts.pin, flag = opts.flag !== false;
   let lie = course.lie(st.x, st.y), still = 0;
+  st.z = st.z || 0; st.vz = st.vz || 0;
+  let air = !!(pin && (st.z < 0 || Math.hypot(st.x - pin[0], st.y - pin[1]) < CUP));
+  let entry = null;
   for (let i = 0; i < 120 * 40; i++){
+    if (air){
+      // over the hole (or hopping off its edge): small steps for the collisions
+      if (!entry){ entry = {vx: st.vx, vy: st.vy, b: Math.abs((st.x - pin[0]) * st.vy - (st.y - pin[1]) * st.vx) / (Math.hypot(st.vx, st.vy) || 1)}; }
+      const n = 10; let dc = 0;
+      for (let k = 0; k < n; k++) dc = cupStep(st, pin, dt / n, flag);
+      st.t += dt; track.push([st.x, st.y, -st.z, st.t]);
+      // in: below the rim with nowhere to go (it can't jump back out from there)
+      if (st.z > BALL_R * 2 + 0.005 || (st.z >= CUP_DEPTH - 1e-6)){
+        if (!st.holed){ st.holed = true; st.holeT = st.t; }
+        if (st.t - st.holeT > 0.35 || (st.z >= CUP_DEPTH - 1e-6 && Math.hypot(st.vx, st.vy) < 0.02)){
+          st.lipIn = !!(st.rimHit && entry.b > CUP * 0.55);
+          return {lie: 'green', holed: true};
+        }
+        continue;
+      }
+      // out: back on the green outside the hole
+      if (dc >= CUP && st.z >= -1e-4){
+        air = false; st.z = 0; st.vz = 0;
+        if (st.contacts){
+          const a0 = Math.atan2(entry.vy, entry.vx), a1 = Math.atan2(st.vy, st.vx);
+          const turn = Math.abs(Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)));
+          st.lip = turn > 0.35 ? 'out' : 'over';
+        }
+        entry = null;
+      }
+      continue;
+    }
     const sp = Math.hypot(st.vx, st.vy);
     lie = course.lie(st.x, st.y);
     if (STOP(lie)) break;
@@ -124,17 +174,17 @@ function roll(course, st, opts){
     // (plus a little drag, so a ball tumbling down a long bank doesn't run away)
     if (sp > 1e-6){ const dv = (fr + (sp > 4 ? 0.02 * (sp - 4) * (sp - 4) : 0)) * dt; if (dv >= sp){ st.vx = 0; st.vy = 0; } else { st.vx -= st.vx / sp * dv; st.vy -= st.vy / sp * dv; } }
     st.vx += pull[0] * dt; st.vy += pull[1] * dt;
-    st.x += st.vx * dt; st.y += st.vy * dt; st.t += dt;
-    if (i % 6 === 0) track.push([st.x, st.y, 0, st.t]);
-    if (opts.pin){
-      const c = cupContact(st, opts.pin);
-      if (c){
-        if (c.holed){ st.holed = true; st.lipIn = !!c.lipIn; track.push([st.x, st.y, 0, st.t]); return {lie: 'green', holed: true}; }
-      }
+    // step in pieces near the hole so a quick ball can't skip over it
+    const nearCup = pin && Math.hypot(st.x - pin[0], st.y - pin[1]) < CUP + sp * dt + 0.05;
+    const n = nearCup ? 8 : 1;
+    for (let k = 0; k < n; k++){
+      st.x += st.vx * dt / n; st.y += st.vy * dt / n;
+      if (pin && Math.hypot(st.x - pin[0], st.y - pin[1]) < CUP){ air = true; st.z = 0; st.vz = 0; break; }
     }
+    st.t += dt;
+    if (air || i % 6 === 0) track.push([st.x, st.y, 0, st.t]);
   }
   track.push([st.x, st.y, 0, st.t]);
-  if (opts.pin && st.willHole){ st.holed = true; st.lipIn = st.willHole === 'lip'; return {lie: 'green', holed: true}; }
   return {lie, holed: false};
 }
 
@@ -160,11 +210,18 @@ function bounce(course, st, vz, opts){
     for (let k = 1; k <= steps; k++){
       const t = tb * k / steps, x = st.x + st.vx * t, y = st.y + st.vy * t, z = z0 + vz * t - G * t * t / 2;
       const h = Math.max(0, z - H(x, y));
+      // coming down onto the hole or into the flagstick: hand over to the cup physics
+      if (opts.pin && k > 1 && h < FLAG_H){
+        const dc = Math.hypot(x - opts.pin[0], y - opts.pin[1]), down = vz - G * t < 0;
+        if ((dc < CUP && down && h < 0.4) || dc < FLAG_R + BALL_R + 0.01){
+          st.x = x; st.y = y; st.t += t; st.z = -h; st.vz = Math.max(0, G * t - vz); return 'green';
+        }
+      }
       track.push([x, y, h, st.t + t]);
       if (k > 1 && h <= 0 && z - H(x, y) < -0.02){ st.x = x; st.y = y; st.t += t; break; }   // landed early on a rise
       if (k === steps){ st.x = x; st.y = y; st.t += t; }
     }
-    if (opts.pin && Math.hypot(st.x - opts.pin[0], st.y - opts.pin[1]) < CUP * 0.8 && vz < 2.5){ st.holed = true; return 'green'; }
+    if (opts.pin && Math.hypot(st.x - opts.pin[0], st.y - opts.pin[1]) < CUP){ st.z = 0; st.vz = vz * 0.3; return 'green'; }   // landed on the hole
   }
   return course.lie(st.x, st.y);
 }
@@ -243,16 +300,16 @@ function fullShot(course, s){
   // the speed that gives each club its usual run-out on a flat fairway (driver ~12% of carry), scaled
   // by spin; the bounces and the roll then play out on the real ground, lies and slopes.
   const runRef = (hitTree ? 0.5 : leaves ? 1.5 + Math.random() * 2 : carry * C.roll) * (top > 0 ? 1 + 1.0 * top : 1 + 0.75 * top) * (1 + along * 0.01);
-  const vRoll = Math.sqrt(2 * SURF.fairway.mu * G * Math.max(0.05, runRef)) / 0.42;   // ~ two fairway bounces' worth of speed lost
+  const vRoll = Math.sqrt(2 * SURF.fairway.mu * G * Math.max(0.05, runRef)) / 0.36;   // ~ two fairway bounces' worth of speed lost
   const vh = Math.hypot(vxL, vyL) || 1, k = vRoll / vh;
   const st = {x: land[0], y: land[1], vx: vxL * k, vy: vyL * k, t: 0};
   const vzIn = Math.min(12, Math.max(2, Math.abs(vzL) * 0.5));
   const rollTrack = [[land[0], land[1], 0, 0]];
   let lie = course.lie(land[0], land[1]), holed = false, lip = null;
   if (!STOP(lie)){
-    lie = bounce(course, st, vzIn, {track: rollTrack, spin: hitTree ? 0 : top, pin: s.pin});
-    if (st.holed){ holed = true; }
-    else if (!STOP(lie)){
+    if (s.pin && Math.hypot(land[0] - s.pin[0], land[1] - s.pin[1]) < CUP){ st.z = 0; st.vz = vzIn; lie = 'green'; }   // straight in the hole
+    else lie = bounce(course, st, vzIn, {track: rollTrack, spin: hitTree ? 0 : top, pin: s.pin});
+    if (!STOP(lie)){
       const r = roll(course, st, {track: rollTrack, pin: s.pin, field: s.field});
       lie = r.lie; holed = r.holed; lip = st.lip || null;
     }
@@ -268,14 +325,14 @@ function fullShot(course, s){
 // Works from the fringe and rough too.
 function putt(course, s){
   // a little more pop in softer strokes, so putts don't come up short
-  const Dist = Math.max(0.15, (s.max || PUTT_MAX) * Math.pow(Math.max(0, s.power), 0.85));
+  const Dist = Math.max(0.15, (s.max || PUTT_MAX) * Math.pow(Math.max(0, s.power), 0.8));
   const v = Math.sqrt(2 * SURF.green.mu * G * Dist);
   const st = {x: s.from[0], y: s.from[1], vx: Math.cos(s.ang) * v, vy: Math.sin(s.ang) * v, t: 0};
   const track = [[st.x, st.y, 0, 0]];
-  const r = roll(course, st, {track, pin: s.pin, field: s.field});
+  const r = roll(course, st, {track, pin: s.pin, field: s.field, flag: !!s.flag});   // the flag comes out for putts, as in Wii golf
   const end = track[track.length - 1];
   return {track, rest: r.holed ? s.pin.slice() : [end[0], end[1]], lie: r.holed ? 'green' : r.lie, holed: r.holed, lipIn: !!st.lipIn,
-    lip: st.lip || null, entry: r.holed ? [st.vx, st.vy] : null};
+    lip: st.lip || null, flag: !!st.flagHit};
 }
 
 // Walk back along a flight to the last dry point (for water drops).
@@ -285,5 +342,5 @@ function dropPoint(course, samples, from){
 }
 
 window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, BALL_R, PUTT_MAX, SURF, DIFFICULTY, setDifficulty, get difficulty(){ return D; },
-  lieFactor, lieRange, puttRange, fullShot, putt, roll, bounce, cupContact, dropPoint};
+  lieFactor, lieRange, puttRange, fullShot, putt, roll, bounce, cupStep, dropPoint, CUP_DEPTH};
 })();

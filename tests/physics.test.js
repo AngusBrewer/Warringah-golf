@@ -49,18 +49,38 @@ const st2 = {x: 0, y: 0, vx: 0, vy: 0, t: 0}; P.roll(gentle, st2, {track: []});
 check('but stays put on a gentle slope in the rough', Math.hypot(st2.x, st2.y) < 0.05);
 
 console.log('Putting');
-const pg = (d, over, off = 0, n = 300) => { let h = 0, lin = 0, lout = 0; for (let i = 0; i < n; i++){ const range = P.puttRange(d), p = Math.pow((d + over) / range, 1 / 0.85);
+const pg = (d, over, off = 0, n = 300) => { let h = 0, lin = 0, lout = 0; for (let i = 0; i < n; i++){ const range = P.puttRange(d), p = Math.pow((d + over) / range, 1 / 0.8);
   const r = P.putt(green, {from: [0, 0], ang: Math.atan2(off, d), power: p, max: range, pin: [d, 0]}); if (r.holed){ h++; if (r.lipIn) lin++; } else if (r.lip) lout++; } return {h: h / n, lin, lout}; };
 check('a firm, straight 3 m putt drops', pg(3, 0.5).h > 0.97);
 check('a firm, straight 9 m putt drops', pg(9, 0.6).h > 0.97);
 check('a putt that is too short stays out', pg(3, -0.4).h === 0);
-check('a putt that is far too fast hops over (sometimes)', pg(3, 4).h < 0.6);
-const edge = pg(4, 0.3, 0.13);
-check('putts catching the edge lip in or out', edge.lin > 0 && edge.lout > 0, `lip-ins ${edge.lin}, lip-outs ${edge.lout}`);
+check('a putt that is far too fast hops over', pg(3, 7).h === 0);
+const mid = P.putt(green, {from: [0, 0], ang: 0, power: 0.6, max: P.puttRange(5), pin: [50, 0]});
+check('a medium (60%) stroke gets a 5 m putt to the hole', mid.rest[0] > 4.8 && mid.rest[0] < 7, `${mid.rest[0].toFixed(2)} m`);
+// the cup is real physics now: send balls at it at set speeds and offsets
+const atCup = (v, b, flag = false) => { const mu = P.SURF.green.mu * 9.81, st = {x: -1, y: b * P.CUP, vx: Math.sqrt(v * v + 2 * mu * (1 - Math.sqrt(Math.max(0, 1 - b * b)) * P.CUP)), vy: 0, t: 0};
+  const r = P.roll(green, st, {track: [], pin: [0, 0], flag}); return r.holed ? (st.lipIn ? 'lipin' : 'in') : (st.lip || 'miss'); };
+check('the cup is 10% bigger than before', Math.abs(P.CUP - 0.132) < 1e-9);
+check('dead centre at 1.2 m/s drops', atCup(1.2, 0) === 'in');
+check('dead centre at 3 m/s jumps the hole', atCup(3, 0) !== 'in');
+check('half way out at 1.2 m/s still drops', atCup(1.2, 0.5) === 'in');
+check('catching the side slowly curls in (lip-in)', ['lipin', 'in'].includes(atCup(0.6, 0.85)), atCup(0.6, 0.85));
+check('catching the side with pace spins out (lip-out)', ['out', 'over'].includes(atCup(1.4, 0.85)), atCup(1.4, 0.85));
+check('missing the cup by a whisker stays out', atCup(1, 1.05) === 'miss');
+check('the flagstick stops a firm, central chip', atCup(2.6, 0, true) === 'in' && atCup(2.6, 0, false) !== 'in');
+let lin = 0, lout = 0; for (let b = 0.6; b < 1; b += 0.02) for (let v = 0.4; v < 2; v += 0.1){ const r = atCup(v, b); if (r === 'lipin') lin++; if (r === 'out' || r === 'over') lout++; }
+check('across the edge of the cup, some lip in and some lip out', lin > 3 && lout > lin, `lip-ins ${lin}, lip-outs ${lout}`);
 check('a putt wide of the cup misses', pg(4, 0.3, 0.25).h === 0);
-check('putter range fits the putt', P.puttRange(2) === 3 && P.puttRange(4) === 6 && P.puttRange(9) === 15);
-const short = P.putt(green, {from: [0, 0], ang: 0, power: 1, max: 6, pin: [50, 0]});
-check('a full stroke rolls the putter range on a flat green', Math.abs(short.rest[0] - 6) < 0.4, `${short.rest[0].toFixed(2)} m`);
+check('putter range fits the putt', P.puttRange(1.5) === 3 && P.puttRange(4) === 8 && P.puttRange(9) === 15);
+const short = P.putt(green, {from: [0, 0], ang: 0, power: 1, max: 8, pin: [50, 0]});
+check('a full stroke rolls the putter range on a flat green', Math.abs(short.rest[0] - 8) < 0.5, `${short.rest[0].toFixed(2)} m`);
+
+console.log('Chip-ins');
+const chipGreen = flatCourse({lie: (x) => x > 20 ? 'green' : 'fairway'});
+let chips = 0, gentlePast = 0; for (let i = 0; i < 200; i++){ const r = shot(chipGreen, {club: 'SW', power: 0.335 + (i % 20) * 0.0015, pin: [30, 0], spin: {top: 0, side: 0}}); if (r.holed) chips++;
+  else if (Math.abs(r.rest[1]) < 0.03 && r.rest[0] > 30 && r.rest[0] < 31.2) gentlePast++; }   // on line, and only ~1 m/s at the hole
+check('chips running at the hole can go in', chips > 5, `${chips} of 200 holed`);
+check('a chip on line at a gentle pace never rolls over the hole', gentlePast === 0, `${gentlePast} ran past`);
 
 console.log('Hazards and trees');
 const water = flatCourse({lie: (x) => x > 120 && x < 160 ? 'water' : 'fairway'});

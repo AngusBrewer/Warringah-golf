@@ -7,6 +7,9 @@ const {rng} = window.GolfGeo;
 // glue several non-indexed geometries (each with a flat colour) into one
 function merge(parts){
   if (LO) parts = parts.filter((p, i) => !p.g.userData.keepNormals || i % 2 === 0);
+  let cardParts = null;
+  if (!LO && !merge.inner){ cardParts = parts.filter(p => p.g.userData.leafy && p.g.userData.clump).map(p => { const c = p.g.userData.clump;
+    return {g: cards(c.r, c.x, c.y, c.z, c.sy, c.seed, c.ctr, 16), c: p.c, shade: p.shade}; }); }
   parts = parts.map(p => { const g = p.g.index ? p.g.toNonIndexed() : p.g; g.userData.keepNormals = p.g.userData.keepNormals; return Object.assign({}, p, {g}); });
   let n = 0; for (const p of parts) n += p.g.attributes.position.count;
   const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3), uv = new Float32Array(n * 2).fill(0.02);
@@ -23,6 +26,7 @@ function merge(parts){
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  if (cardParts && cardParts.length){ merge.inner = true; out.userData.cards = merge(cardParts); merge.inner = false; }
   return out;
 }
 // lumpy leaf clump. Normals point out from the whole crown's centre (cx, cy, cz), so a crown
@@ -48,6 +52,33 @@ function clump(r, x, y, z, sy, seed, ctr){
   }
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.userData.keepNormals = true; g.userData.leafy = true;
   g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (ctr) g.userData.clump = {r, x, y, z, sy, seed, ctr};
+  return g;
+}
+// Leaf cards: small see-through quads of leaves scattered over a clump and turned every which way.
+// Close up they break the crown's outline into twigs and gaps the way real foliage looks; far away
+// (LO) they're left out.
+function cards(r, x, y, z, sy, seed, ctr, n){
+  const R = rng(seed * 7 + 3), pos = [], nor = [], uv = [], v = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < n; i++){
+    // a point on (or just inside) the clump, a random facing, and a size
+    const th = R() * Math.PI * 2, ph = Math.acos(2 * R() - 1), rr = r * (0.8 + R() * 0.38);
+    const cx = x + Math.sin(ph) * Math.cos(th) * rr, cy = y + Math.cos(ph) * rr * sy, cz = z + Math.sin(ph) * Math.sin(th) * rr;
+    v.set(R() - 0.5, R() - 0.5, R() - 0.5).normalize();
+    a.crossVectors(v, Math.abs(v.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : up).normalize(); b.crossVectors(v, a).normalize();
+    const h = r * (0.45 + R() * 0.35);
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
+    const u0 = R() < 0.5 ? 0 : 0.5, v0 = R() < 0.5 ? 0 : 0.5, span = 0.5;      // one of four leaf sprites
+    // lit like the whole crown: normals point out from its centre
+    let nx = cx - ctr[0], ny = (cy - ctr[1]) * 1.3, nz = cz - ctr[2]; const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+    for (const [s, t] of corners){
+      pos.push(cx + (a.x * s + b.x * t) * h, cy + (a.y * s + b.y * t) * h, cz + (a.z * s + b.z * t) * h);
+      nor.push(nx, ny, nz); uv.push(u0 + (s + 1) / 2 * span, v0 + (t + 1) / 2 * span);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.userData.keepNormals = true; g.userData.leafy = true; g.userData.card = true;
   return g;
 }
 function trunk(h, r0, r1, lean = 0, x = 0, z = 0){
@@ -154,11 +185,40 @@ function leafTexture(){
   const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
   return t;
 }
+// Leaf sprites for the cards: four twigs of narrow, drooping eucalypt-style leaves on a clear
+// background, kept inside a circle so a card never shows a straight edge. Grey, so the tree tints them.
+function cardTexture(){
+  const S = 512, H = S / 2, cv = document.createElement('canvas'); cv.width = cv.height = S; const g = cv.getContext('2d'), R = rng(97);
+  for (let q = 0; q < 4; q++){
+    const ox = (q % 2) * H, oy = Math.floor(q / 2) * H, cx = ox + H / 2, cy = oy + H / 2;
+    g.save(); g.beginPath(); g.arc(cx, cy, H * 0.46, 0, Math.PI * 2); g.clip();
+    for (let t = 0; t < 7; t++){
+      // a twig: a gently curving stem with leaves hanging off both sides
+      let x = cx + (R() - 0.5) * H * 0.5, y = cy + (R() - 0.5) * H * 0.5, a = R() * Math.PI * 2;
+      const steps = 9 + Math.floor(R() * 6);
+      g.strokeStyle = 'rgb(120,110,95)'; g.lineWidth = 1.4;
+      for (let k = 0; k < steps; k++){
+        const nx = x + Math.cos(a) * 9, ny = y + Math.sin(a) * 9; g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
+        for (const side of [-1, 1]){
+          if (R() < 0.25) continue;
+          const la = a + side * (0.5 + R() * 0.5) + 0.35, L = 14 + R() * 14, W = 2.6 + R() * 2.2, v = Math.round(140 + R() * 115);
+          g.fillStyle = `rgb(${v},${v},${Math.round(v * 0.96)})`;
+          g.save(); g.translate(nx, ny); g.rotate(la); g.beginPath(); g.ellipse(L / 2, 0, L / 2, W, 0, 0, Math.PI * 2); g.fill(); g.restore();
+        }
+        x = nx; y = ny; a += (R() - 0.5) * 0.5;
+      }
+    }
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(cv); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+  return t;
+}
 // Trees are grouped into 200 m tiles. Near the camera a tile uses the detailed trees; further away
 // a coarse version, so thousands of trees stay cheap to draw. Call update(camera position) each frame.
 function build(scene, trees, ground){
   ground = ground || (() => 0);
   const mat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: leafTexture(), alphaTest: 0.5});
+  const cardMat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: cardTexture(), alphaTest: 0.45});
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const V = 3, TILE = 200, geos = {};
   for (const k in KINDS) for (let v = 0; v < V; v++){ const seed = 100 + v * 17 + k.length;
@@ -172,15 +232,19 @@ function build(scene, trees, ground){
       const sub = list.filter(t => t.kind === k && Math.floor(t.v * V) === v); if (!sub.length) continue;
       for (const lod of ['hi', 'lo']){
         // share the vertex data, but give each tile its own bounds so off-screen tiles are skipped
-        const base = geos[k + v][lod], g = new THREE.BufferGeometry();
-        for (const name in base.attributes) g.setAttribute(name, base.attributes[name]);
-        g.boundingSphere = new THREE.Sphere(window.GolfW(tile.cx, tile.cy, 10), TILE * 0.72 + 25);
-        const mesh = new THREE.InstancedMesh(g, mat, sub.length);
-        sub.forEach((t, i) => { q.setFromAxisAngle(up, t.rot); const w = t.r / (t.h * KINDS[k].spread);
-          m.compose(window.GolfW(t.x, t.y, ground(t.x, t.y) - 0.3), q, s.set(t.h * w, t.h, t.h * w)); mesh.setMatrixAt(i, m);
-          mesh.setColorAt(i, col.setHSL(0.08 * (t.rot / 6.28 - 0.5), 0.1 * t.v, 0.86 + ((t.rot * 7) % 1) * 0.2)); });
-        mesh.visible = lod === 'lo';
-        scene.add(mesh); tile[lod].push(mesh);
+        const bases = [[geos[k + v][lod], mat]];
+        if (lod === 'hi' && geos[k + v].hi.userData.cards) bases.push([geos[k + v].hi.userData.cards, cardMat]);
+        for (const [base, mt] of bases){
+          const g = new THREE.BufferGeometry();
+          for (const name in base.attributes) g.setAttribute(name, base.attributes[name]);
+          g.boundingSphere = new THREE.Sphere(window.GolfW(tile.cx, tile.cy, 10), TILE * 0.72 + 25);
+          const mesh = new THREE.InstancedMesh(g, mt, sub.length);
+          sub.forEach((t, i) => { q.setFromAxisAngle(up, t.rot); const w = t.r / (t.h * KINDS[k].spread);
+            m.compose(window.GolfW(t.x, t.y, ground(t.x, t.y) - 0.3), q, s.set(t.h * w, t.h, t.h * w)); mesh.setMatrixAt(i, m);
+            mesh.setColorAt(i, col.setHSL(0.08 * (t.rot / 6.28 - 0.5), 0.1 * t.v, 0.86 + ((t.rot * 7) % 1) * 0.2)); });
+          mesh.visible = lod === 'lo';
+          scene.add(mesh); tile[lod].push(mesh);
+        }
       }
     }
     out.push(tile);

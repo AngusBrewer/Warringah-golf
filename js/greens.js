@@ -6,13 +6,13 @@ const {pip, edgeDist, bbox, centroid, rng} = window.GolfGeo;
 
 class GreenField {
   // base(x, y) is the real ground height (LiDAR); the green adds a few centimetres of crown on top
-  constructor(poly, seed, base){
+  constructor(poly, seed, base, real){
     this.poly = poly; this.b = bbox(poly); this.c = centroid(poly); this.base = base || (() => 0);
     const R = rng(seed);
     this.stripe = R() * Math.PI;
     const w = (this.b[2] - this.b[0]), hgt = (this.b[3] - this.b[1]);
     this.humps = [];
-    const n = 1 + Math.floor(R() * 2);
+    const n = real ? 0 : 1 + Math.floor(R() * 2);   // measured greens carry their real contours already
     for (let i = 0; i < n; i++) this.humps.push({x: this.b[0] + w * (0.25 + R() * 0.5), y: this.b[1] + hgt * (0.25 + R() * 0.5), amp: 0.03 + R() * 0.05, sig: 3 + R() * 3});
   }
   micro(x, y){ let h = 0; for (const k of this.humps) h += k.amp * Math.exp(-((x - k.x) ** 2 + (y - k.y) ** 2) / (2 * k.sig * k.sig)); return h; }
@@ -32,6 +32,8 @@ function greenMesh(field, W){
   const nx = Math.ceil((b[2] - b[0] + 2*pad) / step), ny = Math.ceil((b[3] - b[1] + 2*pad) / step);
   const pos = [], col = [], uv = [], c = new THREE.Color();
   const light = new THREE.Color('#40902f'), dark = new THREE.Color('#3a842a'), fringe = new THREE.Color('#357a27');
+  if (field.tone){   // match the real green's colour from the aerial photo (keeping the mowing stripes)
+    const t = new THREE.Color(field.tone); light.copy(t).multiplyScalar(1.06); dark.copy(t).multiplyScalar(0.95); fringe.copy(t).multiplyScalar(0.88); }
   // stripe direction across the green
   const sx = Math.cos(field.stripe), sy = Math.sin(field.stripe);
   const vert = (x, y) => {

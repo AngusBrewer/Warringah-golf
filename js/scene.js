@@ -27,6 +27,10 @@ float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
 { float d = length(vWP - cameraPosition); float k = 1.0 - smoothstep(25.0, 140.0, d);
   float n = gn(vWP.xz * 1.7) * 0.55 + gn(vWP.xz * 6.0) * 0.3 + gn(vWP.xz * 0.35) * 0.6;
   diffuseColor.rgb *= mix(1.0, 0.86 + n * 0.17, k); diffuseColor.rgb *= 0.95 + gn(vWP.xz * 0.05) * 0.1;
+  // right under your feet: a fine blade-scale grain, so the ground isn't a smooth photo up close
+  float kc = 1.0 - smoothstep(4.0, 30.0, d);
+  float bl = gn(vWP.xz * 15.0) * 0.5 + gn(vWP.xz * 41.0) * 0.5;
+  diffuseColor.rgb *= mix(1.0, 0.8 + bl * 0.34, kc * ${fine ? '0.35' : '1.0'});
   ${fine ? `// close-cut putting surface: a fine, even grain like real bentgrass
   float kf = 1.0 - smoothstep(3.0, 30.0, d);
   float f2 = gn(vWP.xz * 31.0) * 0.55 + gn(vWP.xz * 11.0) * 0.45;
@@ -62,7 +66,8 @@ class GolfScene {
   buildGround(){
     const c = this.course, d = c.d, [x0, y0, x1, y1] = c.extent, M = d.margin || 90;
     this.gx0 = x0 - M; this.gy0 = y0 - M; this.gw = (x1 - x0) + 2*M; this.gh = (y1 - y0) + 2*M;
-    const S = this.px = Math.min(2, 4000 / Math.max(this.gw, this.gh));  // pixels per metre
+    const photo = d.photo && d.photo.img && d.photo.img.naturalWidth ? d.photo : null;
+    const S = this.px = photo ? Math.min(3, 4096 / Math.max(this.gw, this.gh)) : Math.min(2, 4000 / Math.max(this.gw, this.gh));  // pixels per metre
     const cv = document.createElement('canvas'); cv.width = Math.round(this.gw * S); cv.height = Math.round(this.gh * S);
     const g = cv.getContext('2d');
     const T = (x, y) => [(x - this.gx0) * S, (this.gy0 + this.gh - y) * S];
@@ -84,6 +89,12 @@ class GolfScene {
     for (const gr of d.greens){ path(gr); g.strokeStyle = PAL.fringe; g.lineWidth = 3.6 * S; g.stroke(); g.fillStyle = PAL.green; g.fill(); }
     for (const b of d.bunkers){ path(b); g.strokeStyle = PAL.sandEdge; g.lineWidth = 1.2 * S; g.fillStyle = PAL.sand; g.fill(); g.stroke(); }
     for (const w of d.water){ path(w); g.fillStyle = PAL.water; g.fill(); g.strokeStyle = PAL.waterEdge; g.lineWidth = 1 * S; g.stroke(); }
+    if (photo){
+      // the real aerial photo over the painted map; the bunkers stay faintly outlined so you can see what plays as sand
+      const [ax, ay] = T(photo.x0, photo.y1), [bx, by] = T(photo.x1, photo.y0);
+      g.drawImage(photo.img, ax, ay, bx - ax, by - ay);
+      g.save(); g.globalAlpha = 0.28; for (const b of d.bunkers){ path(b); g.fillStyle = PAL.sand; g.fill(); } g.restore();
+    }
     g.lineCap = 'round'; g.lineJoin = 'round';
     for (const cr of d.creeks){ line(cr); g.strokeStyle = PAL.waterEdge; g.lineWidth = 6.5 * S; g.stroke(); line(cr); g.strokeStyle = PAL.water; g.lineWidth = 4.6 * S; g.stroke(); }
     // white out-of-bounds line
@@ -100,25 +111,34 @@ class GolfScene {
       h.fill(); h.beginPath();
       for (const t of c.trees){ const [tx, ty] = T(t.x + sx * t.base * 0.6, t.y + sy * t.base * 0.6), [bx, by] = T(t.x, t.y); h.moveTo(bx, by); h.lineTo(tx, ty); }
       h.stroke();
-      g.save(); g.globalAlpha = 0.4; g.filter = 'blur(' + Math.round(1.5 * S) + 'px)'; g.drawImage(sc, 0, 0); g.restore(); }
+      g.save(); g.globalAlpha = photo ? 0.28 : 0.4; g.filter = 'blur(' + Math.round(1.5 * S) + 'px)'; g.drawImage(sc, 0, 0); g.restore(); }
     this.groundCanvas = cv;
     const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
     tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.minFilter = THREE.LinearMipmapLinearFilter;
-    // ground follows the real terrain (one vertex every ~5 m)
-    const geo = new THREE.PlaneGeometry(this.gw, this.gh, Math.round(this.gw / 5), Math.round(this.gh / 5)); geo.rotateX(-Math.PI / 2);
+    // ground follows the real terrain (a vertex every 2 m with 1 m LiDAR, else every 5 m)
+    const MS = this.terrain.mesh || 5, SX = Math.round(this.gw / MS), SY = Math.round(this.gh / MS);
+    const geo = new THREE.PlaneGeometry(this.gw, this.gh, SX, SY); geo.rotateX(-Math.PI / 2);
     { const p = geo.attributes.position, cx = this.gx0 + this.gw/2, cy = this.gy0 + this.gh/2;
-      for (let i = 0; i < p.count; i++) p.setY(i, this.terrain.height(p.getX(i) + cx, -p.getZ(i) + cy));
+      if (photo) this.waterLevels();
+      for (let i = 0; i < p.count; i++){ const x = p.getX(i) + cx, y = -p.getZ(i) + cy; let h = this.terrain.height(x, y);
+        // ground under open water drops below the water surface, so the surface is clean
+        if (this.waterLv) for (const w of this.waterLv){ if (x < w.b[0] - 2 || x > w.b[2] + 2 || y < w.b[1] - 2 || y > w.b[3] + 2) continue; if (GolfGeo.pip(x, y, w.a) || GolfGeo.edgeDist(x, y, w.a) < 1.5) h = Math.min(h, w.lvl - 0.35); }
+        p.setY(i, h); }
+      // keep the vertex heights so the ball can sit exactly on the drawn ground (see meshHeight)
+      this.gm = {SX, SY, h: Float32Array.from({length: p.count}, (_, i) => p.getY(i))};
       geo.computeVertexNormals(); }
     const mesh = new THREE.Mesh(geo, grassDetail(new THREE.MeshLambertMaterial({map: tex})));
     mesh.position.set(this.gx0 + this.gw/2, 0, -(this.gy0 + this.gh/2));
     this.scene.add(mesh);
+    if (photo) this.buildWater();
     // far ground so the horizon isn't empty
-    const far = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000).rotateX(-Math.PI/2), new THREE.MeshLambertMaterial({color: '#7a8f5c'}));
+    const far = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000).rotateX(-Math.PI/2), new THREE.MeshLambertMaterial({color: photo ? photo.edge : '#7a8f5c'}));
     far.position.set(mesh.position.x, -0.6, mesh.position.z); this.scene.add(far);
     // a few suburban roofs outside the course
     const r = rng(77), roofs = [], geoB = new THREE.BoxGeometry(1, 1, 1);
     for (let i = 0; i < 420; i++){ const x = this.gx0 - 250 + r() * (this.gw + 500), y = this.gy0 - 250 + r() * (this.gh + 500);
       if (this.course.inWater(x, y) || (d.sea && this.terrain.height(x, y) + (this.terrain.lo || 0) < 2.5)) continue;   // not in the harbour
+      if (photo && x > this.gx0 && x < this.gx0 + this.gw && y > this.gy0 && y < this.gy0 + this.gh) continue;   // the photo already shows the real houses
       if (this.course.inBounds(x, y) || this.course.inBounds(x + 25, y) || this.course.inBounds(x - 25, y) || this.course.inBounds(x, y + 25) || this.course.inBounds(x, y - 25)) continue;
       roofs.push([x, y, 10 + r()*8, 12 + r()*8, 4 + r()*3, r()]); }
     const houses = new THREE.InstancedMesh(geoB, new THREE.MeshLambertMaterial({color: '#ffffff'}), roofs.length);
@@ -128,11 +148,45 @@ class GolfScene {
     this.scene.add(houses);
   }
 
+  // Open water as a real surface: flat at the water's level, blue and glossy with the sky in it
+  // (from above, a photo of water is nearly black).
+  waterLevels(){
+    // each pond's level: the low ground inside its outline (LiDAR reads the water surface, with some noise)
+    const r = rng(5); this.waterLv = [];
+    for (const w of this.course.d.water){
+      const b = GolfGeo.bbox(w), hs = [];
+      for (let k = 0; k < 600 && hs.length < 80; k++){ const x = b[0] + r() * (b[2] - b[0]), y = b[1] + r() * (b[3] - b[1]); if (GolfGeo.pip(x, y, w)) hs.push(this.terrain.height(x, y)); }
+      if (!hs.length) continue;
+      hs.sort((p, q) => p - q); this.waterLv.push({a: w, b, lvl: hs[Math.floor(hs.length * 0.4)]});
+    }
+  }
+  buildWater(){
+    const mat = new THREE.MeshPhongMaterial({color: '#2e6e9f', specular: '#e4f1ff', shininess: 70, emissive: '#0c2a44', transparent: true, opacity: 0.9});
+    // the sky reflects more at a low angle (Fresnel), with a slow ripple of light and dark
+    mat.customProgramCacheKey = () => 'water';
+    mat.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWW;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+varying vec3 vWW;
+float wh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return mix(mix(wh(i), wh(i+vec2(1,0)), f.x), mix(wh(i+vec2(0,1)), wh(i+vec2(1,1)), f.x), f.y); }`)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+{ vec3 v = normalize(cameraPosition - vWW); float fr = pow(1.0 - clamp(v.y, 0.0, 1.0), 6.0);
+  float rip = wn(vWW.xz * 0.35) * 0.6 + wn(vWW.xz * 1.3) * 0.4;
+  diffuseColor.rgb = mix(diffuseColor.rgb * (0.85 + rip * 0.3), vec3(0.45, 0.66, 0.86), fr * 0.5); }`);
+    };
+    for (const w of this.waterLv || []){
+      const pts = []; for (let i = 0; i < w.a.length; i += 2) pts.push(new THREE.Vector2(w.a[i], w.a[i + 1]));
+      if (pts.length < 3) continue;
+      const geo = new THREE.ShapeGeometry(new THREE.Shape(pts)); geo.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(geo, mat); m.position.y = w.lvl; m.renderOrder = 1; this.scene.add(m);
+    }
+  }
   buildFlag(){
     const grp = this.flag = new THREE.Group();
     // real sizes: 2.13 m pin, 10.8 cm cup
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.0125, 0.0125, 2.13, 8), new THREE.MeshLambertMaterial({color: '#f4f4f4'}));
-    pole.position.y = 1.065; grp.add(pole);
+    pole.position.y = 1.065; grp.add(pole); this.pole = pole;
     const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4, 6, 1), new THREE.MeshLambertMaterial({color: '#e23b2e', side: THREE.DoubleSide}));
     cloth.geometry.translate(0.3, 0, 0); cloth.position.set(0, 1.9, 0); grp.add(cloth); this.cloth = cloth;
     // The cup is a real hole: its opening marks the stencil buffer, and the inside wall, the bottom
@@ -197,8 +251,19 @@ class GolfScene {
     this.ring.position.y = 0.06; this.scene.add(this.ring);
   }
 
-  ground(x, y){ const f = this.greenAt(x, y); return f ? f.height(x, y) : this.terrain.height(x, y); }
-  greenAt(x, y){ for (const f of this.fields){ const b = f.b; if (x < b[0] - 3 || x > b[2] + 3 || y < b[1] - 3 || y > b[3] + 3) continue; if (f.height(x, y) > 0 || GolfGeo.pip(x, y, f.poly)) return f; } return null; }
+  // Height of the ground as drawn. The ground mesh is flat triangles between points 5 m apart, which can
+  // sit a little above the smooth height model; using it keeps the ball from sinking into the grass.
+  meshHeight(x, y){
+    const g = this.gm; if (!g) return this.terrain.height(x, y);
+    const fx = (x - this.gx0) / this.gw * g.SX, fy = (this.gy0 + this.gh - y) / this.gh * g.SY;
+    const i = Math.max(0, Math.min(g.SX - 1, Math.floor(fx))), j = Math.max(0, Math.min(g.SY - 1, Math.floor(fy))), u = fx - i, v = fy - j, n = g.SX + 1;
+    const a = g.h[j * n + i], b = g.h[(j + 1) * n + i], c = g.h[(j + 1) * n + i + 1], d = g.h[j * n + i + 1];
+    return u + v <= 1 ? a + (d - a) * u + (b - a) * v : c + (b - c) * (1 - u) + (d - c) * (1 - v);
+  }
+  ground(x, y){ const base = Math.max(this.meshHeight(x, y), this.terrain.height(x, y)) + 0.01, f = this.greenAt(x, y); return f ? Math.max(base, f.height(x, y) + 0.012) : base; }
+  greenAt(x, y){ for (const f of this.fields){ const b = f.b; if (x < b[0] - 3 || x > b[2] + 3 || y < b[1] - 3 || y > b[3] + 3) continue; if (GolfGeo.pip(x, y, f.poly) || GolfGeo.edgeDist(x, y, f.poly) < 2) return f; } return null; }   // the green mesh reaches ~2 m past its edge
+  // the flagstick comes out when putting (the physics leaves it in for chips and full shots)
+  setFlagIn(on){ this.pole.visible = on; this.cloth.visible = on; }
   setPin(x, y){ this.flag.position.copy(W(x, y, this.ground(x, y))); this.pin = [x, y]; }
   setBall(x, y, h = 0, trail = false){
     const g = this.ground(x, y);
@@ -207,12 +272,36 @@ class GolfScene {
     const inCup = h < -0.004; if (this.ball.material !== (inCup ? this.ballCupMat : this.ballMat)){ this.ball.material = inCup ? this.ballCupMat : this.ballMat; this.ball.renderOrder = inCup ? 5 : 0; this.ballEdge.visible = !inCup; }
     if (trail){ this.trailPts.push(this.ball.position.clone()); if (this.trailPts.length > 160) this.trailPts.shift(); this.trail.geometry.setFromPoints(this.trailPts); this.trail.visible = true; }
   }
+  // the other player's ball: a coloured ball with a thin pole and disc so it can be found from anywhere
+  setOthers(list){
+    if (!this.others){ this.others = new THREE.Group(); this.scene.add(this.others); }
+    while (this.others.children.length){ const o = this.others.children.pop(); o.traverse(m => { if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); }); }
+    for (const o of list || []){
+      if (!o || o.x == null) continue;
+      const g = new THREE.Group(), h = this.ground(o.x, o.y), col = new THREE.Color(o.color || '#e0602a');
+      const b = new THREE.Mesh(new THREE.SphereGeometry(this.BR * 2, 14, 10), new THREE.MeshLambertMaterial({color: col, emissive: col.clone().multiplyScalar(0.35)}));
+      b.position.y = this.BR * 2;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.6, 6), new THREE.MeshBasicMaterial({color: col}));
+      pole.position.y = 1.8;
+      const top = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 8), new THREE.MeshBasicMaterial({color: col}));
+      top.position.y = 3.7;
+      g.add(b, pole, top); g.position.copy(W(o.x, o.y, h)); this.others.add(g);
+    }
+  }
   clearTrail(){ this.trailPts = []; this.trail.visible = false; }
   placeGolfer(b, ang, putt){ this.golfer.place(W(b[0], b[1], this.ground(b[0], b[1])), ang, putt); this.golfer.visible = true; }
   buildGreens(){
     this.fields = []; this.reads = [];
     this.course.d.greens.forEach((poly, i) => {
-      const f = new GolfGreens.GreenField(poly, 900 + i * 31, (x, y) => this.terrain.height(x, y)); this.fields.push(f);
+      const f = new GolfGreens.GreenField(poly, 900 + i * 31, (x, y) => this.terrain.height(x, y), this.terrain.realGreens); this.fields.push(f);
+      if (this.course.d.photo && this.groundCanvas && this.px){
+        // the green's own colour in the photo (the 3D green sits on top of it)
+        const g = this.groundCanvas.getContext('2d'), S = this.px, x0 = (f.b[0] - this.gx0) * S, y0 = (this.gy0 + this.gh - f.b[3]) * S;
+        const w = Math.max(1, Math.round((f.b[2] - f.b[0]) * S)), h = Math.max(1, Math.round((f.b[3] - f.b[1]) * S));
+        try { const px = g.getImageData(Math.round(x0), Math.round(y0), w, h).data; let r = 0, gg = 0, bb = 0, n = 0;
+          for (let j = 0; j < h; j += 2) for (let i = 0; i < w; i += 2){ const X = f.b[0] + i / S, Y = f.b[3] - j / S; if (!GolfGeo.pip(X, Y, f.poly)) continue; const k = (j * w + i) * 4; r += px[k]; gg += px[k + 1]; bb += px[k + 2]; n++; }
+          if (n > 20){ f.tone = `rgb(${Math.round(r / n)}, ${Math.round(gg / n)}, ${Math.round(bb / n)})`; } } catch (e) {}
+      }
       const mesh = GolfGreens.greenMesh(f, W); grassDetail(mesh.material, true); this.scene.add(mesh);
       const read = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2}));
       read.visible = false; read.userData = mesh.userData; read.renderOrder = 2; this.scene.add(read); this.reads.push(read);

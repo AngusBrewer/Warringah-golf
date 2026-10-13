@@ -16,7 +16,8 @@ It checks:
 - Difficulty.
 - Spin: topspin runs on, backspin stops and can check back, side spin curves.
 - Rolling on slopes.
-- Putting: holing firm putts, short putts staying out, lip-ins and lip-outs, the putter range.
+- Putting and the cup (real rim physics): capture speeds through the middle and off-centre, lip-ins and lip-outs, the flagstick, the putter range.
+- Chip-ins: chips on line at a gentle pace drop instead of running over the hole.
 - Water, bunkers and trees.
 
 **A whole round in a headless browser.** This needs Playwright and a local web server:
@@ -25,6 +26,7 @@ It checks:
 python3 -m http.server 8765          # in this folder
 COURSE=warringah ROUND=all node tests/e2e-round.js
 COURSE=northbridge ROUND=front node tests/e2e-round.js
+PLAYERS=2 COURSE=warringah ROUND=quick3 node tests/e2e-round.js   # two players taking turns
 ```
 
 `ROUND` can be `all`, `front`, `back`, `quick3`, or a hole number. A bot plays every shot. The test passes if there are no page errors and every hole of the round gets a score.
@@ -45,12 +47,15 @@ Use the GitHub Pages address, not a file opened from disk, because phone motion 
 | 8 | Tap the top of the ball on the phone (or screen), then hit an iron. | The label says Topspin; the ball runs on further after landing. Repeat with backspin: it stops quicker. |
 | 9 | Swing much harder than your full swing. | The bar shakes and the shot hooks or slices hard. |
 | 10 | On the green, press **Read**. | The slope grid shows; the camera does **not** jump overhead. Pressing Read off the green just shows a message. |
-| 11 | Putt short, then long. | Putts roll smoothly; a ball reaching the cup at a good pace drops in without stopping first. Edge putts sometimes lip in or out. |
+| 11 | Putt short, then long. | The flag comes out when you putt. Putts roll smoothly into the cup and drop. Firm putts can hit the back and jump out; balls catching the edge curl in slowly or spin out with pace. |
+| 11b | Chip from just off the green straight at the flag. | The flag stays in; a chip running at the hole at a sensible pace hits the stick or drops in rather than rolling over. |
 | 12 | Lock the phone for 10 seconds, then unlock it. | The phone reconnects by itself. If not, use **Phone code → Make a new code** and rescan. |
 | 13 | Menu → choose **Front 9**, **Back 9**, **Quick 3 holes** or a single hole, then **Play**. | The round plays only those holes, and the scorecard shows just them. |
 | 14 | Menu while mid-round, then **Resume**. | You go back to the same hole with your scores. |
 | 15 | No phone: in the pairing window, press **Play with keyboard**. | Arrow keys aim and change club; holding Space and letting go swings. |
 | 16 | Change Difficulty to Simulation, then Beginner. | Beginner forgives more: smaller hooks, kinder rough, gimme putts inside about 60 cm. |
+| 17 | Menu → Players: **2 players**. Play, then scan the code with a second phone. | Each phone says Player 1 / Player 2. The chip shows "P1 ✓ P2 ✓". Only the player whose turn it is can swing; the other phone says to wait. |
+| 18 | Finish a hole with two players. | The scorecard shows a row for each player; at the end of the round it names the winner. |
 
 ## Not covered by the automated tests
 
