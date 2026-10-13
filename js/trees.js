@@ -213,12 +213,19 @@ function cardTexture(){
   const t = new THREE.CanvasTexture(cv); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
   return t;
 }
+// Two-sided foliage should be lit the same from both sides: three.js flips the normal on the back
+// face, which turned half the leaf cards and grass tufts nearly black. This keeps it as modelled.
+function noBackFlip(mat, key){
+  mat.customProgramCacheKey = () => key;
+  mat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal = normal * faceDirection;', '')); };
+  return mat;
+}
 // Trees are grouped into 200 m tiles. Near the camera a tile uses the detailed trees; further away
 // a coarse version, so thousands of trees stay cheap to draw. Call update(camera position) each frame.
 function build(scene, trees, ground){
   ground = ground || (() => 0);
   const mat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: leafTexture(), alphaTest: 0.5});
-  const cardMat = new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: cardTexture(), alphaTest: 0.45});
+  const cardMat = noBackFlip(new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide, map: cardTexture(), alphaTest: 0.45}), 'leafcards');
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const V = 3, TILE = 200, geos = {};
   for (const k in KINDS) for (let v = 0; v < V; v++){ const seed = 100 + v * 17 + k.length;

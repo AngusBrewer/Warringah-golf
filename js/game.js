@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 14;
+const VERSION = 15;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -21,10 +21,8 @@ const CURVE = {off: 0, gentle: 0.5, full: 1};
 const settings = {
   get curve(){ const v = store.get('wgolf-curve', 'gentle'); return v in CURVE ? v : 'gentle'; },
   get flip(){ return !!store.get('wgolf-flip2', false); },
-  get wind(){ return store.get('wgolf-wind2', true); },
-  get difficulty(){ const v = store.get('wgolf-difficulty', 'beginner'); return GolfPhysics.DIFFICULTY[v] ? v : 'beginner'; }   // new players start on Beginner
+  get wind(){ return store.get('wgolf-wind2', true); }
 };
-GolfPhysics.setDifficulty(settings.difficulty);
 
 // ---------- state ----------
 let course = null, scene = null, hole = null, holeIdx = 0;
@@ -110,7 +108,7 @@ function onPhone(m, k = 0){
   switch (m.t){
     case 'club': if (CLUBS[m.club] && mode === 'aim'){ setClub(m.club); } send({t:'club', club}); break;   // echo so the phone shows the club in play
     case 'read': toggleRead(); break;
-    case 'aim': aimHeld = m.on ? (m.d < 0 ? 1 : -1) : 0; break;   // ◀ (d = -1) turns the aim left
+    case 'aim': setAimHeld(m.on ? (m.d < 0 ? 1 : -1) : 0); break;   // ◀ (d = -1) turns the aim left
     case 'view': toggleMap(); break;
     case 'swing': if (!m.cal) onSwing(m); break;
     case 'spin': setSpin(Number(m.top) || 0, Number(m.side) || 0, true); break;
@@ -224,6 +222,7 @@ function prepareShot(){
   club = autoClub(); aim = autoAim(); mode = 'aim'; setSpin(0, 0);
   scene.setBall(ball[0], ball[1]); scene.clearTrail(); scene.placeGolfer(ball, aim, club === 'Pt'); meter.reset();
   scene.setFlagIn(club !== 'Pt');
+  try { scene.placeGrass(ball, aim); } catch (e) { console.warn('grass', e); }
   reading = false; scene.showRead(hole.green, false);
   setView();
   updateHUD();
@@ -287,12 +286,14 @@ function onSwing(m){
   meter.final(m.over ? 1.2 : power); if (m.over && !putting) meter.crazy();
   const face = Number(m.face) || 0;
   if (!putting && !m.putt){ recentFaces.push(face); while (recentFaces.length > 8) recentFaces.shift(); store.set('wgolf-recentface', recentFaces); }
+  overK = m.over ? (m.overK != null ? Number(m.overK) || 0 : 0.5) : 0;
   takeShot(power, faceToSide(face, putting), !!m.over);
 }
 // the putter's range for this putt, and the lie's distance range (Wii golf style)
-function puttMax(){ return GolfPhysics.puttRange(dist(ball, pin)); }
+function puttMax(){ return GolfPhysics.PUTT_MAX; }   // one fixed putter: shorter putts just take less of the bar
 function lieText(){ const r = GolfPhysics.lieRange(lie, club); return r[0] === 1 && r[1] === 1 ? '100%' : r[0] === r[1] ? Math.round(r[0] * 100) + '%' : `${Math.round(r[0] * 100)}–${Math.round(r[1] * 100)}%`; }
 function greenField(p){ return scene.greenAt(p[0], p[1]) || scene.fields[hole.green]; }
+let overK = 0;   // how far past a full swing the overswing went (0-1), from the phone
 function takeShot(power, faceSide, over){
   strokes++; lastPos = ball.slice(); mode = 'flight'; scene.showAim(ball, 0, 0); updateHUD(); sendState();
   reading = false; scene.showRead(hole.green, false); scene.clearTrail();
@@ -313,7 +314,9 @@ function launch(power, faceSide, over){
   const C = CLUBS[club];
   let side = faceSide * 0.9 * C.curve * (C.max * power / 100);
   // overswing: the bar goes haywire and it's a coin flip whether it slices right or hooks left
-  if (over){ const dir = Math.random() < 0.5 ? -1 : 1; side = dir * (0.1 + Math.random() * 0.07) * C.max * power * Math.max(0.5, C.curve); banner(dir > 0 ? 'Overswing! Big slice.' : 'Overswing! Big hook.'); }
+  // overswing: a coin flip between a big slice and a big hook, worse the harder you overdid it
+  if (over){ const dir = Math.random() < 0.5 ? -1 : 1, k = 1 + 0.7 * Math.max(0, Math.min(1, overK));
+    side = dir * (0.17 + Math.random() * 0.1) * k * C.max * power * Math.max(0.55, C.curve); banner(dir > 0 ? 'Overswing! Big slice.' : 'Overswing! Big hook.'); }
   const lr = GolfPhysics.lieRange(lie, club), lieK = lr[0] + Math.random() * (lr[1] - lr[0]);
   shotInfo = {club, lie, from: ball.slice(), power, over, lieK, spin: {...spin}, aim};
   const r = GolfPhysics.fullShot(course, {from: ball, ang: aim, club, power, lie, lieK, wind: windV, side, pin, spin, field: scene.fields[hole.green]});
@@ -361,7 +364,8 @@ function stepAnim(now){
     anim = null; finishShot(r.rest, r.lie, r.holed, r.samples.concat(R.map(p => [p[0], p[1], 0])), r.events, r);
   } else if (anim.kind === 'putt'){
     const {r} = anim, T = r.track, end = T[T.length - 1][3];
-    if (t < end){ const p = trackAt(T, t);
+    const tp = t * 1.5;   // putts play back at 1.5x: the same roll, less waiting
+    if (tp < end){ const p = trackAt(T, tp);
       if (!anim.rattled && p[2] < -0.06){ anim.rattled = true; GolfSound.cup(); }
       scene.setBall(p[0], p[1], p[2]); scene.view('address', {ball: [p[0] - Math.cos(aim)*0.01, p[1] - Math.sin(aim)*0.01], ang: aim, putt: true, toPin: dist(p, pin)}); return; }
     if (r.holed){ anim = null; return finishShot(r.rest, r.lie, r.holed, [], [], r); }
@@ -380,6 +384,7 @@ function shotShape(r){
 }
 function finishShot(rest, newLie, holed, track, events, r = {}){
   mode = 'result';
+  if (!holed && newLie !== 'water' && newLie !== 'ob' && !course.inPlay(rest[0], rest[1], hole)) newLie = 'ob';   // well off the hole: out
   const fromOff = club !== 'Pt', P = GolfPhysics.difficulty;
   if (holed){
     if (r.lipIn) callout('Lip in!', 'gold'); else if (fromOff && strokes > 1) callout('Chip-in!', 'gold');
@@ -472,7 +477,7 @@ const meter = {
   pinTick(){   // where the bar needs to reach to get to the pin
     const t = $('#mPin'); if (!hole || mode !== 'aim'){ t.style.display = 'none'; return; }
     const C = CLUBS[club], d = playsLike();
-    const need = C.putt ? d / puttMax() : Math.pow(Math.min(1.3, d / (C.max * GolfPhysics.lieFactor(lie, club))), 1 / 0.9);
+    const need = C.putt ? GolfPhysics.puttPower(d) : Math.pow(Math.min(1.3, d / (C.max * GolfPhysics.lieFactor(lie, club))), 1 / 0.9);
     t.style.display = need <= 1.3 ? 'block' : 'none'; t.style.bottom = this.scale(need * (C.putt ? 1 : this.k)) + '%';
   }
 };
@@ -494,7 +499,7 @@ function updateHUD(){
   const pl = playsLike(); $('#playsRow').hidden = Math.abs(pl - d) < 2 || club === 'Pt'; $('#hPlays').textContent = `${fmtM(pl)} ${pl > d ? 'uphill' : 'downhill'}`;
   meter.setLie(); meter.pinTick();
   $('#hClub').textContent = C.name;
-  $('#hClubMax').textContent = C.putt ? `Putter range ${puttMax()} m` : `Up to ${Math.round(C.max * GolfPhysics.lieFactor(lie, club))} m`;
+  $('#hClubMax').textContent = C.putt ? `Putter: full stroke ${puttMax()} m` : `Up to ${Math.round(C.max * GolfPhysics.lieFactor(lie, club))} m`;
   const ws = Math.hypot(windV[0], windV[1]);
   $('#hWind').textContent = ws < 0.3 ? 'Calm' : `${Math.round(ws)} m/s`;
   $('#windArrow').style.transform = `rotate(${(aim - Math.atan2(windV[1], windV[0])) * 180 / Math.PI}deg)`;
@@ -504,7 +509,7 @@ function updateHUD(){
     scene.showAim(ball, aim, C.putt ? Math.min(d + 0.5, puttMax()) : Math.min(reach, Math.max(reach * 0.5, d)), C.putt);
   }
   $('#spinBox').hidden = !(mode === 'aim' && !C.putt);
-  $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Hold the pad and putt.' : 'Hold the pad and swing.') : 'Link your phone, or hold Space to swing.') : '';
+  $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Tap the pad, settle, then putt.' : 'Tap the pad, settle, then swing.') : 'Link your phone, or hold Space to swing.') : '';
   drawMini();
 }
 function showScorecard(final){
@@ -566,8 +571,8 @@ let spaceDown = 0;
 window.addEventListener('keydown', e => {
   GolfSound.unlock();
   if (e.target.closest && e.target.closest('input, select, textarea')) return;
-  if (e.key === 'ArrowLeft') aimHeld = 1;            // left on screen = anticlockwise
-  else if (e.key === 'ArrowRight') aimHeld = -1;
+  if (e.key === 'ArrowLeft'){ if (aimHeld !== 1) setAimHeld(1); }            // left on screen = anticlockwise
+  else if (e.key === 'ArrowRight'){ if (aimHeld !== -1) setAimHeld(-1); }
   else if (e.key === 'ArrowUp' || e.key === 'ArrowDown'){ if (mode !== 'aim') return; const i = ORDER.indexOf(club) + (e.key === 'ArrowUp' ? -1 : 1); if (i >= 0 && i < ORDER.length){ setClub(ORDER[i]); send({t:'club', club}); } e.preventDefault(); }
   else if (e.key === 'g' || e.key === 'G') toggleRead();
   else if (e.key === 'm' || e.key === 'M') toggleMap();
@@ -577,13 +582,22 @@ window.addEventListener('keydown', e => {
   else if (e.key === ' '){ if (!spaceDown && mode === 'aim'){ spaceDown = performance.now(); meter.reset(); } e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') aimHeld = 0;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') setAimHeld(0);
   if (e.key === ' ' && spaceDown){ const p = Math.min(1, (performance.now() - spaceDown) / 1200); spaceDown = 0; if (mode === 'aim'){ meter.final(p); takeShot(p, 0, false); } }
 });
+// Aim: a tap nudges it a fraction of a degree; holding turns it slowly at first and speeds up the
+// longer you hold (full shots: 2°/s rising to 14°/s over 2.5 s; putts a third of that).
+let aimSince = 0;
+function setAimHeld(d){
+  if (d && d !== aimHeld && mode === 'aim'){ aim += d * (club === 'Pt' ? 0.1 : 0.25) * Math.PI / 180; setView(); updateHUD(); }
+  aimHeld = d; aimSince = performance.now();
+}
 function stepAim(dt){
   if (!aimHeld || mode !== 'aim') return;
-  const rate = club === 'Pt' ? 0.18 : 0.35;   // radians per second
-  aim += (aimHeld > 0 ? 1 : -1) * rate * dt;    // +1 = left (anticlockwise seen from above)
+  const held = (performance.now() - aimSince) / 1000;
+  if (held < 0.25) return;                                    // a quick tap is just the nudge
+  const degPerSec = (2 + 12 * Math.min(1, (held - 0.25) / 2.5)) * (club === 'Pt' ? 0.33 : 1);
+  aim += (aimHeld > 0 ? 1 : -1) * degPerSec * Math.PI / 180 * dt;    // +1 = left (anticlockwise seen from above)
   setView(); updateHUD();
 }
 
@@ -601,21 +615,21 @@ const guide = {
   open: false, step: 0, pending: null, calCount: 0,
   steps: [
     {title: 'Welcome to Northside Golf', body: () => `<p>Real Sydney courses, played like Wii golf: your phone is the club and this screen is the course.</p>
-      <ul><li><b>Hold it safely:</b> grip the phone firmly in both hands, like the handle of a club, with your thumb on the green pad.</li>
+      <ul><li><b>Hold it safely:</b> grip the phone firmly in both hands, like the handle of a club: <b>screen facing the target</b> (it's the clubface), <b>volume buttons pointing down</b>.</li>
       <li>Give yourself room: check nobody and nothing is within a club's length.</li>
       <li>No phone handy? You can play with the keyboard instead.</li></ul>`},
     {title: 'Link your phone', body: () => `<div class="pairRow"><div id="gQr" style="width:170px;height:170px;background:#fff;border-radius:12px;padding:8px;display:grid;place-items:center;border:1px solid var(--panel-line);flex:none">${qrImg || 'Making a code…'}</div>
       <ol><li>Point your phone's camera at the code and open the link.</li><li>Tap <b>Start</b>.</li><li>When it asks about <b>motion</b>, tap <b>Allow</b> (iPhones ask once).</li></ol></div>
       <div class="gStatus"><span><span class="dotLive" id="gDot"></span><span id="gTxt"></span></span></div>
       <p style="font-size:14px;color:var(--panel-muted)">Phone and computer just need internet. If the code won't link, press "Make a new code" in the Phone code window.</p>`},
-    {title: 'Set your swing', body: () => `<p>Make <b>three smooth, full swings</b> (hold the green pad while you swing). That sets what 100% power feels like for you, and what "straight" is.</p>
+    {title: 'Set your swing', body: () => `<p>Make <b>three smooth, full swings</b>. For each one: tap the green pad, settle at address until the phone clicks, then swing. That sets what 100% power feels like for you, and what "straight" is.</p>
       <div class="calDots" id="gCal"><span>●</span><span>●</span><span>●</span></div><p id="gCalTxt" style="color:var(--panel-muted)"></p>`},
     {title: 'How to play', body: () => `<ul>
       <li><b>Aim</b> with ◀ ▶ on the phone (or the arrow keys).</li>
       <li><b>Clubs</b> are picked for you; change them on the phone (or ↑ ↓).</li>
-      <li><b>Swing</b>: hold the pad and swing. The bar on the left shows your power. Past the white line is an <b>overswing</b>, which can hook or slice wildly. From the rough or sand the white line drops: you can't hit it as far.</li>
+      <li><b>Swing</b>: tap the pad, hold still at address until it clicks, then swing (no need to keep holding). The bar on the left shows your power. Past the white line is an <b>overswing</b>: a big hook or slice, the further past the worse. From the rough or sand the white line drops: you can't hit it as far.</li>
       <li><b>Spin</b>: tap the ball (bottom right) — top for topspin and more roll, bottom for backspin that stops, sides to curve it.</li>
-      <li><b>Putting</b>: a smaller, gentler stroke. The putter's range fits the putt; press <b>Read</b> (or G) on the green to see the slopes.</li>
+      <li><b>Putting</b>: a smaller, gentler stroke. A full stroke always rolls 22 m; shorter putts take less (the tick on the bar shows how much). Press <b>Read</b> (or G) on the green to see the slopes.</li>
       <li><b>Scoring</b>: get it in the hole in as few shots as you can. Par is the target; one under is a birdie.</li></ul>`}
   ],
   show(step = 0, pending = null){ this.open = true; this.pending = pending || this.pending; $('#guide').hidden = false; this.go(step); },
@@ -662,7 +676,6 @@ function initMenu(){
     rb.onclick = () => startRound(id, true);
   });
   const ps = $('#playersSel'); if (ps){ ps.value = String(nPlayers); ps.onchange = () => { nPlayers = Number(ps.value) === 2 ? 2 : 1; store.set('wgolf-players', nPlayers); pairText(); linkLabel(); }; }
-  const ds = $('#diffSel'); if (ds){ ds.value = settings.difficulty; ds.onchange = () => { store.set('wgolf-difficulty', ds.value); GolfPhysics.setDifficulty(ds.value); if (hole) updateHUD(); }; }
   const mt = $('#muteChk'); if (mt){ mt.checked = !GolfSound.muted; mt.onchange = () => GolfSound.setMuted(!mt.checked); }
   $('#menuBtn').onclick = () => { $('#menu').hidden = false; $('#hud').hidden = true; mode = 'menu'; initMenu(); };
   $('#cardBtn').onclick = () => showScorecard(false);

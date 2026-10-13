@@ -18,19 +18,19 @@ const ORDER = ['Dr','3W','5i','7i','9i','PW','SW','Pt'];
 // the cup is drawn bigger than real (like Wii golf), so it catches a little more
 const CUP = 0.132;           // 10% bigger again in version 14
 const BALL_R = 0.035;            // the ball's radius for rim contact (drawn about twice real size)
-const PUTT_MAX = 26;
+const PUTT_MAX = 22;
 const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', rough:'Rough', bunker:'Bunker', water:'Water', ob:'Out of bounds'};
 
 // ---- difficulty: changes the game, not just the labels ----
 // lie: how much of the rough/bunker penalty applies; curve: hook/slice strength; wind; break: how much
 // putts curve on slopes; gimme: putts this close are conceded; leaves: how much speed a crown keeps.
+// One setting for everyone (version 15). It keeps the putting, cup and green-reading feel of the old
+// Beginner level, with more of the wind and the curve on hooks and slices.
 const DIFFICULTY = {
-  beginner:   {lie: 0.5,  curve: 0.6,  wind: 0.5, brk: 0.7,  gimme: 0.6,  leaves: 1.25, lipIn: 1.4},
-  standard:   {lie: 1,    curve: 1,    wind: 1,   brk: 1,    gimme: 0.35, leaves: 1,    lipIn: 1},
-  simulation: {lie: 1.25, curve: 1.25, wind: 1.2, brk: 1.15, gimme: 0,    leaves: 0.85, lipIn: 0.8}
+  game: {lie: 0.6, curve: 0.75, wind: 0.75, brk: 0.7, gimme: 0.6, leaves: 1.25, lipIn: 1.4}
 };
-let D = DIFFICULTY.standard;
-function setDifficulty(name){ D = DIFFICULTY[name] || DIFFICULTY.standard; return D; }
+let D = DIFFICULTY.game;
+function setDifficulty(){ return D; }   // kept so older callers don't break
 
 // ---- lies (Wii golf style): each lie gives a range of how much of the club's distance you get, and
 // woods suffer much more from a bad lie than wedges do ----
@@ -49,8 +49,12 @@ function lieFactor(lie, club){ const r = lieRange(lie, club); return (r[0] + r[1
 // The putter's range steps up with the length of the putt (as in Wii golf), so a full stroke on a short
 // putt only goes a little past the hole instead of off the green.
 // A natural, medium stroke (about 60%) gets a putt to the hole; a full one sends it well past.
-const PUTT_RANGES = [3, 5, 8, 11, 15, 20, 26];
-function puttRange(d){ for (const r of PUTT_RANGES) if (r >= d * 1.6) return r; return PUTT_RANGES[PUTT_RANGES.length - 1]; }
+// One fixed putter (version 15): a full stroke always rolls PUTT_MAX on a flat green and shorter putts
+// just take less of a stroke. The stroke maps to distance as power^1.6, so the short putts you hit most
+// get the most of the bar: 1 m ≈ 20%, 3 m ≈ 32%, 6 m ≈ 47%, 10 m ≈ 63%, 22 m = 100%.
+const PUTT_EXP = 1.6;
+function puttRange(){ return PUTT_MAX; }
+function puttPower(d){ return Math.pow(Math.max(0, d) / PUTT_MAX, 1 / PUTT_EXP); }
 
 // ---- the ground: bounce and rolling resistance per lie ----
 // e: how much of the vertical speed comes back up; keep: horizontal speed kept per bounce;
@@ -58,8 +62,8 @@ function puttRange(d){ for (const r of PUTT_RANGES) if (r >= d * 1.6) return r; 
 const SURF = {
   green:   {e: 0.22, keep: 0.6,  mu: 0.052},
   fringe:  {e: 0.26, keep: 0.62, mu: 0.08},
-  fairway: {e: 0.34, keep: 0.65, mu: 0.12},
-  tee:     {e: 0.34, keep: 0.65, mu: 0.12},
+  fairway: {e: 0.4,  keep: 0.65, mu: 0.12},
+  tee:     {e: 0.4,  keep: 0.65, mu: 0.12},
   rough:   {e: 0.16, keep: 0.45, mu: 0.18},
   bunker:  {e: 0,    keep: 0,    mu: 9},
   water:   {e: 0,    keep: 0,    mu: 9},
@@ -172,7 +176,7 @@ function roll(course, st, opts){
     }
     // rolling resistance slows the ball but never pushes it backwards
     // (plus a little drag, so a ball tumbling down a long bank doesn't run away)
-    if (sp > 1e-6){ const dv = (fr + (sp > 4 ? 0.02 * (sp - 4) * (sp - 4) : 0)) * dt; if (dv >= sp){ st.vx = 0; st.vy = 0; } else { st.vx -= st.vx / sp * dv; st.vy -= st.vy / sp * dv; } }
+    if (sp > 1e-6){ const dv = (fr + (opts.drag || 0) * sp + (sp > 4 ? 0.02 * (sp - 4) * (sp - 4) : 0)) * dt; if (dv >= sp){ st.vx = 0; st.vy = 0; } else { st.vx -= st.vx / sp * dv; st.vy -= st.vy / sp * dv; } }
     st.vx += pull[0] * dt; st.vy += pull[1] * dt;
     // step in pieces near the hole so a quick ball can't skip over it
     const nearCup = pin && Math.hypot(st.x - pin[0], st.y - pin[1]) < CUP + sp * dt + 0.05;
@@ -200,10 +204,14 @@ function bounce(course, st, vz, opts){
     vz = vz * S.e;
     let keep = S.keep;
     // spin acts on the first bounce: topspin kicks forward, backspin bites (and can check back on a green)
-    if (first && opts.spin){ const t = opts.spin;
-      keep *= t > 0 ? 1 + 0.35 * t : 1 + 0.75 * t;
-      if (t < -0.4 && (lie === 'green' || lie === 'fringe')) keep -= (-t - 0.4) * 0.9; }
-    st.vx *= keep; st.vy *= keep; first = false;
+    let zip = 0;
+    if (first && opts.spin){ const t = opts.spin, soft = lie === 'green' || lie === 'fringe';
+      if (t > 0) keep *= 1 + 0.35 * t;
+      else if (soft && t < -0.25) zip = opts.zip || 0;          // the wedge bites and the ball spins back toward you
+      else keep *= Math.max(0.05, 1 + 0.8 * t); }               // on grass it just stops quickly
+    if (zip){ const sp = Math.hypot(st.vx, st.vy) || 1; st.vx = -st.vx / sp * zip; st.vy = -st.vy / sp * zip; vz *= 0.6; }
+    else { st.vx *= keep; st.vy *= keep; }
+    first = false;
     if (vz < 1.0) return lie;                          // too small to leave the ground: it rolls from here
     const tb = 2 * vz / G, steps = Math.max(4, Math.round(tb / 0.04));
     const H = course.terrain ? (x, y) => course.terrain.height(x, y) : () => 0, z0 = H(st.x, st.y);
@@ -299,18 +307,31 @@ function fullShot(course, s){
   // The flight above has no air drag, so its landing speed is too high. Instead, the ball comes down with
   // the speed that gives each club its usual run-out on a flat fairway (driver ~12% of carry), scaled
   // by spin; the bounces and the roll then play out on the real ground, lies and slopes.
-  const runRef = (hitTree ? 0.5 : leaves ? 1.5 + Math.random() * 2 : carry * C.roll) * (top > 0 ? 1 + 1.0 * top : 1 + 0.75 * top) * (1 + along * 0.01);
-  const vRoll = Math.sqrt(2 * SURF.fairway.mu * G * Math.max(0.05, runRef)) / 0.36;   // ~ two fairway bounces' worth of speed lost
+  // The speed it keeps after the first bounce sets the run-out: on a fairway it runs about RUN x carry x the
+  // club's roll; greens are receptive (they take pace off the landing) and rough grabs it. Spin then acts on
+  // the first bounce (see bounce); drag in the roll stops it running on for ages.
+  const RUN = 1.15, LAND = {green: 0.6, fringe: 0.7, fairway: 1, tee: 1, rough: 0.75, ob: 0.8};
+  // part shots (chips and pitches) run out more for their length than full swings do
+  const CHIP = {Dr: 0.1, '3W': 0.15, '5i': 0.2, '7i': 0.25, '9i': 0.3, PW: 0.3, SW: 0.35}, cfr = Math.min(1, carry / C.max);
+  const rollFrac = C.roll + (CHIP[s.club] || 0.2) * (1 - cfr) * (1 - cfr);
+  const runRef = (hitTree ? 0.5 : leaves ? 1.5 + Math.random() * 2 : carry * rollFrac * RUN) * (top > 0 ? 1 + 1.0 * top : 1) * (1 + along * 0.01);
+  const lie0 = course.lie(land[0], land[1]);
+  const v1 = Math.sqrt(2 * SURF.fairway.mu * G * Math.max(0.05, runRef)) * (LAND[lie0] || 1);
+  const vRoll = v1 / (surf(lie0).keep || 0.6);
   const vh = Math.hypot(vxL, vyL) || 1, k = vRoll / vh;
   const st = {x: land[0], y: land[1], vx: vxL * k, vy: vyL * k, t: 0};
-  const vzIn = Math.min(12, Math.max(2, Math.abs(vzL) * 0.5));
+  const vzIn = Math.min(16, Math.max(2.5, Math.abs(vzL) * 0.65));
+  // backspin: wedges zip it back on a green; longer clubs barely check
+  const SPINK = {Dr: 0.4, '3W': 0.5, '5i': 0.7, '7i': 0.9, '9i': 1.15, PW: 1.35, SW: 1.6};
+  const tEff = top * (SPINK[s.club] || 1), cf = Math.min(1, carry / C.max);
+  const zip = tEff < -0.25 ? 1.7 * Math.min(1.25, -tEff - 0.25) * Math.pow(cf, 0.7) : 0;
   const rollTrack = [[land[0], land[1], 0, 0]];
   let lie = course.lie(land[0], land[1]), holed = false, lip = null;
   if (!STOP(lie)){
     if (s.pin && Math.hypot(land[0] - s.pin[0], land[1] - s.pin[1]) < CUP){ st.z = 0; st.vz = vzIn; lie = 'green'; }   // straight in the hole
-    else lie = bounce(course, st, vzIn, {track: rollTrack, spin: hitTree ? 0 : top, pin: s.pin});
+    else lie = bounce(course, st, vzIn, {track: rollTrack, spin: hitTree ? 0 : tEff, zip, pin: s.pin});
     if (!STOP(lie)){
-      const r = roll(course, st, {track: rollTrack, pin: s.pin, field: s.field});
+      const r = roll(course, st, {track: rollTrack, pin: s.pin, field: s.field, drag: 0.45});
       lie = r.lie; holed = r.holed; lip = st.lip || null;
     }
   }
@@ -324,8 +345,7 @@ function fullShot(course, s){
 // Putt. s.max is the putter's range for this putt; s.field (optional) is the green's slope surface.
 // Works from the fringe and rough too.
 function putt(course, s){
-  // a little more pop in softer strokes, so putts don't come up short
-  const Dist = Math.max(0.15, (s.max || PUTT_MAX) * Math.pow(Math.max(0, s.power), 0.8));
+  const Dist = Math.max(0.15, (s.max || PUTT_MAX) * Math.pow(Math.max(0, s.power), PUTT_EXP));
   const v = Math.sqrt(2 * SURF.green.mu * G * Dist);
   const st = {x: s.from[0], y: s.from[1], vx: Math.cos(s.ang) * v, vy: Math.sin(s.ang) * v, t: 0};
   const track = [[st.x, st.y, 0, 0]];
@@ -342,5 +362,5 @@ function dropPoint(course, samples, from){
 }
 
 window.GolfPhysics = {CLUBS, ORDER, LIE_NAME, CUP, BALL_R, PUTT_MAX, SURF, DIFFICULTY, setDifficulty, get difficulty(){ return D; },
-  lieFactor, lieRange, puttRange, fullShot, putt, roll, bounce, cupStep, dropPoint, CUP_DEPTH};
+  lieFactor, lieRange, puttRange, puttPower, PUTT_EXP, fullShot, putt, roll, bounce, cupStep, dropPoint, CUP_DEPTH};
 })();

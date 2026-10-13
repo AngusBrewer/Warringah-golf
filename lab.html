@@ -157,7 +157,7 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--
 <script>
 (() => {
 const $ = s => document.querySelector(s);
-const VERSION = 14;   // bump on every upload; the phone page must match
+const VERSION = 15;   // bump on every upload; the phone page must match
 const logEl = $('#log');
 function log(m){ logEl.textContent += `[${new Date().toLocaleTimeString()}] ${m}\n`; logEl.scrollTop = logEl.scrollHeight; }
 function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }

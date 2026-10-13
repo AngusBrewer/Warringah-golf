@@ -34,6 +34,8 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 .pad .big{font-family:var(--display);font-size:40px;font-weight:700;line-height:1;color:var(--fairway)}
 .pad .small{color:var(--muted);font-size:15px;max-width:26ch}
 .pad.held{background:var(--fairway);transform:scale(.985)}
+.pad.settle{background:var(--amber-soft);border-color:var(--amber)}
+.pad.settle .big{color:var(--amber)}
 .pad.held .big,.pad.held .small{color:var(--fairway-ink)}
 .pad.cal{border-color:var(--amber);background:var(--amber-soft)}
 .pad.cal .big{color:var(--amber)}
@@ -73,7 +75,8 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
   <section class="start" id="startView">
     <button class="primary" id="startBtn">Start</button>
     <p>Your phone will ask to use <b>motion</b>. Tap <b>Allow</b>: that's how it feels your swing. Keep this page open while you play.</p>
-    <p><b>Hold it safely:</b> grip the phone firmly in both hands like a club handle, with your thumb on the green pad. Give yourself room to swing.</p>
+    <p><b>How to hold it:</b> grip the phone firmly in both hands like a club handle, <b>screen facing the target</b> (the screen is the clubface) and the <b>volume buttons pointing down</b>. Give yourself room to swing.</p>
+    <p><b>To swing:</b> tap the green pad, settle at address and hold still until it clicks, then swing. You don't need to keep your thumb on it.</p>
   </section>
   <div id="playView" hidden style="display:contents">
     <div class="clubs" id="clubs" role="group" aria-label="Choose a club"></div>
@@ -81,9 +84,9 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
     <div class="aimrow"><button id="aimL" aria-label="Aim left">◀ Aim</button><button id="mapB">Map</button><button id="readB">Read</button><button id="aimR" aria-label="Aim right">Aim ▶</button></div>
     <div class="spinrow" id="spinRow"><div class="spinball" id="spinBall" aria-label="Spin: tap where to strike the ball"><i id="spinDot"></i></div>
       <div class="lab"><b id="spinLab">No spin</b>Tap the ball: top for topspin, bottom for backspin, sides to curve it. Double-tap to reset.</div></div>
-    <section class="pad" id="pad" aria-label="Hold to swing">
-      <div class="big" id="padBig">Hold here</div>
-      <div class="small" id="padSmall">Keep your thumb on the pad and swing.</div>
+    <section class="pad" id="pad" aria-label="Tap, hold still, then swing">
+      <div class="big" id="padBig">Tap to swing</div>
+      <div class="small" id="padSmall">Tap, settle at address until it clicks, then swing.</div>
     </section>
     <div class="foot">
       <div class="result"><div class="tag" id="lastTag">Last swing</div><div class="num" id="pw">–</div></div>
@@ -98,7 +101,7 @@ main{flex:1;display:flex;flex-direction:column;padding:0 16px calc(14px + env(sa
 <script src="vendor/peerjs.min.js"></script>
 <script>
 (() => {
-const VERSION = 14;
+const VERSION = 15;
 const $ = s => document.querySelector(s);
 const hostId = decodeURIComponent((location.hash || '').slice(1)).replace(/[^a-z0-9-]/gi, '');
 const device = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'this device';
@@ -122,7 +125,7 @@ let club = store.get('wgolf-club', 'Dr');
 let full = store.get('wgolf-full', null);       // °/s of your 100% swing, set by calibration
 let puttFull = store.get('wgolf-puttfull', null);
 const FULL_DEFAULT = 1100, PUTT_DEFAULT = 300;  // from your first test session
-let face0 = store.get('wgolf-face0', null);      // your 'straight' face reading, from the setup swings
+let face0 = store.get('wgolf-face0b', null);     // your 'straight' face reading, from the setup swings (new grip from v15)
 let calibrating = null;                          // {mode, peaks: [], faces: []}
 const mode = () => club === 'Pt' ? 'putt' : ['9i', 'PW', 'SW'].includes(club) ? 'chip' : 'full';
 
@@ -177,7 +180,7 @@ function renderClubs(){
   $('#clubs').innerHTML = CLUBS.map(([k]) => `<button data-club="${k}" aria-pressed="${k === club}">${k}</button>`).join('');
   $('#clubName').textContent = CLUBS.find(c => c[0] === club)[1] + (club === 'Pt' ? ' · soft stroke, like a real putt' : '');
   $('#calBtn').textContent = club === 'Pt' ? 'Set full putt' : 'Set full swing';
-  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Hold the pad and make a smooth putting stroke.' : 'Keep your thumb on the pad and swing.';
+  $('#padSmall').textContent = calibrating ? calText() : club === 'Pt' ? 'Tap, settle over the ball until it clicks, then make a smooth stroke.' : 'Tap, settle at address until it clicks, then swing.';
   $('#pad').classList.toggle('cal', !!calibrating);
   $('#spinRow').hidden = club === 'Pt';
 }
@@ -207,7 +210,7 @@ function calSwing(peak, faceRaw){
   const med = [...calibrating.peaks].sort((a,b) => a-b)[1];
   if (calibrating.mode === 'putt'){ puttFull = Math.round(med); store.set('wgolf-puttfull', puttFull); }
   else { full = Math.round(med); store.set('wgolf-full', full);
-    face0 = Math.round([...calibrating.faces].sort((a,b) => a-b)[1]); store.set('wgolf-face0', face0); }
+    face0 = Math.round([...calibrating.faces].sort((a,b) => a-b)[1]); store.set('wgolf-face0b', face0); }
   setMsg(calibrating.mode === 'putt' ? `Full putt set: ${puttFull} °/s.` : `Full swing set: ${full} °/s. A swing like that is 100% power.`);
   toast('Saved');
   calibrating = null; renderClubs(); hello();
@@ -232,19 +235,26 @@ function showSpin(top, side){
 // Android buzzes. iPhones don't let web pages vibrate, so every phone also gets a "thwack" and a flash
 // (and newer iPhones a light tap from a hidden switch).
 let actx = null;
+// let sounds play even with the iPhone's silent switch on (iOS 17+)
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+function click(){
+  if (!actx || actx.state !== 'running') return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'square'; o.frequency.setValueAtTime(1500, t); g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + 0.06);
+}
 function unlockAudio(){ try { if (!actx){ const A = window.AudioContext || window.webkitAudioContext; if (A) actx = new A(); } if (actx && actx.state === 'suspended') actx.resume(); } catch {} }
 function thwack(power, putt){
   if (!actx || actx.state !== 'running') return;
   const t = actx.currentTime, n = actx.createBuffer(1, Math.ceil(actx.sampleRate * 0.08), actx.sampleRate), d = n.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
   const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); src.buffer = n; f.type = putt ? 'bandpass' : 'highpass'; f.frequency.value = putt ? 2200 : 1200;
-  g.gain.value = putt ? 0.35 : 0.5 + power * 0.5; src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t);
+  g.gain.value = putt ? 0.6 : 0.8 + power * 0.7; src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t);
   if (!putt){ const o = actx.createOscillator(), og = actx.createGain(); o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(60, t + 0.12);
-    og.gain.setValueAtTime(0.5, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.15); o.connect(og); og.connect(actx.destination); o.start(t); o.stop(t + 0.2); }
+    og.gain.setValueAtTime(0.9, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.15); o.connect(og); og.connect(actx.destination); o.start(t); o.stop(t + 0.2); }
 }
 function impact(power, putt){
   try { navigator.vibrate?.(putt ? 20 : [30 + Math.round(power * 50)]); } catch {}
-  try { $('#hapticSw').click(); } catch {}
   thwack(power, putt);
   pad.classList.remove('hit'); void pad.offsetWidth; pad.classList.add('hit');
 }
@@ -252,7 +262,11 @@ function impact(power, putt){
 // ---------- motion ----------
 let gotMotion = false, rot = 0, lastT = 0, lastSend = 0;
 let holding = false, active = false, peak = 0, t0 = 0, lowSince = 0, coolUntil = 0;
-let practice = false, stillSince = 0, readyUntil = 0;   // swings without holding the pad are practice swings
+let practice = false, stillSince = 0, readyUntil = 0;
+// Tap, then swing (version 15): a tap arms the club; once the phone has been still at address for a
+// moment it clicks, and the next swing counts. No need to keep a thumb on the screen.
+let arm = 'idle', armAt = 0, readyAt = 0;
+const STILL = {full: 28, chip: 22, putt: 14};       // °/s: steadier than this counts as holding still
 
 // ---------- face angle ----------
 // From address (pad pressed) we track the phone's full 3D orientation by integrating the gyro.
@@ -305,7 +319,7 @@ function onMotion(e){
   const now = performance.now(), dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
   const a = rr.alpha || 0, b = rr.beta || 0, g = rr.gamma || 0;
   rot = Math.hypot(a, b, g);
-  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device, v: VERSION}); setMsg(hostId ? 'Pick a club, hold the pad and swing.' : 'Hold the pad and swing. (Not linked to a screen.)'); }
+  if (!gotMotion){ gotMotion = true; motionStatus = 'ok'; send({t:'status', motion:'ok', device, v: VERSION}); setMsg(hostId ? 'Pick a club, tap the pad, settle, then swing.' : 'Tap the pad, settle, then swing. (Not linked to a screen.)'); }
 
   const acc = e.accelerationIncludingGravity;
   if (acc && acc.x != null && rot < 120) gLP = [gLP[0]*0.8 + acc.x*0.2, gLP[1]*0.8 + acc.y*0.2, gLP[2]*0.8 + acc.z*0.2];
@@ -316,14 +330,19 @@ function onMotion(e){
   }
 
   const M = MODES[mode()];
-  const practiceOk = false;   // swings only count while you hold the pad
-  if (!active && now > coolUntil && ((holding && rot > M.start) || practiceOk)){ active = true; practice = !holding; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
+  if (arm === 'settling'){
+    if (rot < STILL[mode()]){ if (!stillSince) stillSince = now; } else stillSince = 0;
+    if (stillSince && now - stillSince > 350 && now - armAt > 300) setReady(now);
+    else if (now - armAt > 9000) disarm('Tap the pad when you\'re ready.');
+  } else if (arm === 'ready' && !active && now - readyAt > 8000) disarm('Too long: tap again when you\'re ready.');
+  holding = arm === 'ready';
+  if (!active && now > coolUntil && holding && rot > M.start){ active = true; practice = !holding; peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; t0 = now; lowSince = 0; }
   if (active){
     if (rot > peak){ peak = rot; faceAtPeak = faceNow(); oldAtPeak = gammaSum; }
     if (rot < M.end){ if (!lowSince) lowSince = now; } else lowSince = 0;
     if ((lowSince && now - lowSince > M.endHold && now - t0 > 120) || now - t0 > 2500) finish(now);
   }
-  if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding}); }
+  if (now - lastSend > 40){ lastSend = now; send({t:'m', r: Math.round(rot), h: holding || active}); }
   if (!$('#live').hidden) $('#live').textContent = `Rotation ${Math.round(rot)} °/s${active ? ' · swinging' : ''} · version ${VERSION}`;
 }
 
@@ -339,18 +358,19 @@ function finish(now){
   pendingTimer = setTimeout(() => { if (active) return; const p = pending; pending = null; if (p) shoot(p); }, M.wait);
 }
 function shoot(p){
-  coolUntil = performance.now() + 600;
+  coolUntil = performance.now() + 600; disarm();
   if (calibrating && !p.practice){ impact(0.6, p.mode === 'putt'); send({t:'swing', club, cal: true, putt: p.mode === 'putt', peak: Math.round(p.peak), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)}); calSwing(p.peak, p.face); return; }
   const M = MODES[p.mode], top = p.mode === 'putt' ? (puttFull || PUTT_DEFAULT) : (full || FULL_DEFAULT);
   const power = Math.max(0.02, Math.min(1, (p.peak - M.floor) / (top - M.floor)));
   const over = p.mode === 'full' && p.peak > top * 1.15;
+  const overK = over ? Math.min(1, (p.peak / top - 1.15) / 0.35) : 0;     // how far past it: 0 = just over, 1 = way over
   impact(power, p.mode === 'putt');
   if (p.practice){ readyUntil = performance.now() + 2500; }   // keep rehearsing without a fresh pause
-  send({t: p.practice ? 'practice' : 'swing', club, putt: p.mode === 'putt', power, over, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
+  send({t: p.practice ? 'practice' : 'swing', club, putt: p.mode === 'putt', power, over, overK, peak: Math.round(p.peak), face: Math.round(Math.max(-120, Math.min(120, p.face - (p.mode === 'full' && face0 != null ? face0 : 0)))), faceRaw: Math.round(p.face), faceOld: Math.round(p.old), dur: Math.round(p.dur)});
   $('#lastTag').textContent = (p.practice ? 'Practice ' : 'Last ') + (p.mode === 'putt' ? 'putt' : 'swing') + (over ? ' · overswing' : '');
   $('#pw').innerHTML = Math.round(power * 100) + '<small>%</small>';
   $('#padBig').textContent = (p.practice ? 'Practice: ' : '') + (over ? 'Overswing!' : power > 0.9 ? 'Pure' : power > 0.6 ? 'Nice' : power > 0.3 ? 'Steady' : 'Soft');
-  setTimeout(() => { $('#padBig').textContent = holding ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here'; }, 1400);
+  setTimeout(() => { if (arm === 'idle') $('#padBig').textContent = 'Tap to swing'; }, 1400);
 }
 
 // ---------- aim buttons ----------
@@ -364,20 +384,27 @@ aimBtn($('#aimL'), -1); aimBtn($('#aimR'), 1);
 $('#mapB').onclick = () => send({t:'view'});
 $('#readB').onclick = () => send({t:'read'});
 
-// ---------- hold pad ----------
-const pad = $('#pad'); const pointers = new Set();
-function setHold(on){
-  if (on === holding) return;
-  holding = on; pad.classList.toggle('held', on);
-  if (on) addressNow();
-  $('#padBig').textContent = on ? (club === 'Pt' ? 'Putt!' : 'Swing!') : 'Hold here';
-  if (!on && active) finish(performance.now());
-  send({t:'m', r: Math.round(rot), h: holding});
+// ---------- the pad: tap to arm ----------
+const pad = $('#pad');
+function setPad(big, small, cls){ $('#padBig').textContent = big; if (small != null) $('#padSmall').textContent = small; pad.classList.toggle('held', cls === 'ready'); pad.classList.toggle('settle', cls === 'settle'); }
+function armNow(){
+  unlockAudio();
+  arm = 'settling'; armAt = performance.now(); stillSince = 0;
+  setPad('Hold still…', club === 'Pt' ? 'Settle over the ball. It clicks when it\'s ready.' : 'Take your address and hold still. It clicks when it\'s ready.', 'settle');
 }
-pad.addEventListener('pointerdown', e => { pointers.add(e.pointerId); try { pad.setPointerCapture(e.pointerId); } catch {} setHold(true); e.preventDefault(); });
-['pointerup','pointercancel','lostpointercapture'].forEach(ev => pad.addEventListener(ev, e => { pointers.delete(e.pointerId); if (!pointers.size) setHold(false); }));
+function setReady(now){
+  arm = 'ready'; readyAt = now; addressNow();        // address: the face is square from here
+  click(); try { $('#hapticSw').click(); } catch {}
+  setPad(club === 'Pt' ? 'Putt!' : 'Swing!', 'Ready. Swing whenever you like.', 'ready');
+  send({t:'m', r: Math.round(rot), h: true});
+}
+function disarm(msg){
+  arm = 'idle'; stillSince = 0; holding = false;
+  setPad('Tap to swing', calibrating ? calText() : (msg || (club === 'Pt' ? 'Tap, settle over the ball until it clicks, then make a smooth stroke.' : 'Tap, settle at address until it clicks, then swing.')), '');
+}
+pad.addEventListener('pointerdown', e => { e.preventDefault(); if (arm === 'idle') armNow(); else if (!active) disarm('Cancelled. Tap again when you\'re ready.'); });
 pad.addEventListener('contextmenu', e => e.preventDefault());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); else { pointers.clear(); setHold(false); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); else disarm(); });
 })();
 </script>
 </body>

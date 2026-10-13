@@ -23,7 +23,7 @@ const { chromium } = require('playwright');
     if (st.mode === 'roundEnd') break;
     if (st.mode !== 'aim'){ await pg.waitForTimeout(60); continue; }
     const d = Math.hypot(st.ball[0]-st.pin[0], st.ball[1]-st.pin[1]);
-    const p = await pg.evaluate(([d, club, lie]) => club === 'Pt' ? Math.min(1, Math.pow((d + 0.4) / GolfPhysics.puttRange(d), 1 / 0.8))
+    const p = await pg.evaluate(([d, club, lie]) => club === 'Pt' ? Math.min(1, GolfPhysics.puttPower(d + 0.4))
       : Math.min(1, Math.pow(Math.min(1, d / (GolfPhysics.CLUBS[club].max * GolfPhysics.lieFactor(lie, club))), 1 / 0.9)), [d, st.club, st.lie]);
     log.push(`P${st.cur + 1} h${st.hole + 1} ${st.lie} ${st.club} d=${d.toFixed(1)} p=${p.toFixed(2)}`);
     await pg.evaluate(p => window.__golf.takeShot(p), p); shots++;

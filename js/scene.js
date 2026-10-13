@@ -272,6 +272,66 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
     const inCup = h < -0.004; if (this.ball.material !== (inCup ? this.ballCupMat : this.ballMat)){ this.ball.material = inCup ? this.ballCupMat : this.ballMat; this.ball.renderOrder = inCup ? 5 : 0; this.ballEdge.visible = !inCup; }
     if (trail){ this.trailPts.push(this.ball.position.clone()); if (this.trailPts.length > 160) this.trailPts.shift(); this.trail.geometry.setFromPoints(this.trailPts); this.trail.visible = true; }
   }
+  // ---------- grass ----------
+  // Real tufts of grass around the ball, so the ground up close isn't a smooth (or blurry) photo.
+  // Rough gets taller, scruffier tufts; fairways and tees a short, sparse sward; nothing on greens,
+  // sand, water or bare paths. Each tuft takes its colour from the ground right under it.
+  buildGrass(){
+    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S; const g = cv.getContext('2d'), R = rng(41);
+    for (let i = 0; i < 46; i++){
+      const x = S * (0.08 + R() * 0.84), lean = (R() - 0.5) * S * 0.35, h = S * (0.45 + R() * 0.55), w = 1.6 + R() * 2.4, v = Math.round(150 + R() * 105);
+      g.fillStyle = `rgb(${v},${v},${Math.round(v * 0.9)})`;
+      g.beginPath(); g.moveTo(x - w, S); g.quadraticCurveTo(x + lean * 0.3, S - h * 0.6, x + lean, S - h); g.quadraticCurveTo(x + lean * 0.3 + w * 0.4, S - h * 0.6, x + w, S); g.fill();
+    }
+    const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
+    // a tuft: three crossed upright cards, 1 m wide and 1 m tall (scaled per instance)
+    const pos = [], nor = [], uv = [];
+    for (let k = 0; k < 3; k++){ const a = k * Math.PI / 3, c = Math.cos(a) * 0.5, s2 = Math.sin(a) * 0.5;
+      const P = [[-c, 0, -s2], [c, 0, s2], [c, 1, s2], [-c, 0, -s2], [c, 1, s2], [-c, 1, -s2]], U = [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]];
+      P.forEach((p, i) => { pos.push(...p); nor.push(0, 1, 0); uv.push(...U[i]); }); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    const mat = new THREE.MeshLambertMaterial({map: tex, alphaTest: 0.45, side: THREE.DoubleSide});
+    mat.customProgramCacheKey = () => 'grasstufts';
+    mat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal = normal * faceDirection;', '')); };
+    this.grass = new THREE.InstancedMesh(geo, mat, 26000); this.grass.count = 0; this.grass.frustumCulled = false;
+    this.scene.add(this.grass);
+  }
+  placeGrass(ball, ang){
+    if (!this.grass) this.buildGrass();
+    const gm = this.grass, c = this.course, cv = this.groundCanvas, S = this.px, r = rng(Math.round(ball[0] * 7 + ball[1] * 13));
+    const ux = Math.cos(ang), uy = Math.sin(ang), back = 12, ahead = 70, side = 30;
+    // the patch: a little behind the ball, mostly ahead of it where the camera looks
+    const corners = [[-back, -side], [-back, side], [ahead, -side], [ahead, side]].map(([a, b]) => [ball[0] + ux * a - uy * b, ball[1] + uy * a + ux * b]);
+    const x0 = Math.min(...corners.map(p => p[0])), x1 = Math.max(...corners.map(p => p[0])), y0 = Math.min(...corners.map(p => p[1])), y1 = Math.max(...corners.map(p => p[1]));
+    let img = null, ix0 = 0, iy0 = 0, iw = 0;
+    try { ix0 = Math.max(0, Math.floor((x0 - this.gx0) * S)); iy0 = Math.max(0, Math.floor((this.gy0 + this.gh - y1) * S));
+      iw = Math.min(cv.width - ix0, Math.ceil((x1 - x0) * S) + 2); const ih = Math.min(cv.height - iy0, Math.ceil((y1 - y0) * S) + 2);
+      img = cv.getContext('2d').getImageData(ix0, iy0, iw, ih); } catch (e) {}
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
+    let n = 0;
+    for (let tries = 0; tries < 60000 && n < gm.instanceMatrix.count; tries++){
+      // denser near the ball, thinner far away
+      const a = -back + Math.pow(r(), 1.5) * (ahead + back), b = (r() * 2 - 1) * side * (0.5 + 0.5 * Math.min(1, (a + back) / 30));
+      const x = ball[0] + ux * a - uy * b, y = ball[1] + uy * a + ux * b;
+      if (Math.hypot(x - ball[0], y - ball[1]) < 0.6) continue;                      // keep the ball itself clear
+      const lie = c.lie(x, y);
+      if (lie === 'green' || lie === 'fringe' || lie === 'bunker' || lie === 'water' || lie === 'ob') continue;
+      const rough = lie === 'rough';
+      if (!rough && r() > 0.45) continue;                                           // fairways: a sparser, short sward
+      let R0 = 0.33, G0 = 0.5, B0 = 0.22;
+      if (img){ const px = Math.floor((x - this.gx0) * S) - ix0, py = Math.floor((this.gy0 + this.gh - y) * S) - iy0;
+        if (px >= 0 && py >= 0 && px < img.width && py < img.height){ const k = (py * img.width + px) * 4, d = img.data; R0 = d[k] / 255; G0 = d[k + 1] / 255; B0 = d[k + 2] / 255; }
+        if (G0 < R0 * 1.04 || G0 < 0.16) continue; }                               // bare earth, paths, deep shade: no grass
+      const h = rough ? 0.09 + r() * 0.13 : 0.035 + r() * 0.03, w = rough ? 0.22 + r() * 0.2 : 0.2 + r() * 0.12;
+      q.setFromAxisAngle(up, r() * Math.PI);
+      m.compose(W(x, y, this.ground(x, y) - 0.02), q, sc.set(w, h, w));
+      gm.setMatrixAt(n, m);
+      const f = (0.95 + r() * 0.25) * 1.45;   // the blade texture is mid-grey, so lift the colour to match the ground
+      col.setRGB(R0, G0 * 1.04, B0).convertSRGBToLinear().multiplyScalar(f); gm.setColorAt(n, col); n++;
+    }
+    gm.count = n; gm.instanceMatrix.needsUpdate = true; if (gm.instanceColor) gm.instanceColor.needsUpdate = true;
+  }
   // the other player's ball: a coloured ball with a thin pole and disc so it can be found from anywhere
   setOthers(list){
     if (!this.others){ this.others = new THREE.Group(); this.scene.add(this.others); }

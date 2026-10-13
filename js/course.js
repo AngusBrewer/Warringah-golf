@@ -55,6 +55,19 @@ class Course {
     return false;
   }
   greenAt(x, y){ return this.hit(this.greens, x, y); }
+  // Stricter out of bounds (version 15): as well as leaving the property, a ball that finishes well away
+  // from the hole being played is out, unless it is on (or right by) a fairway, green or tee.
+  // Corridor: 30 m either side of the line of play on a par 3, 40 m on longer holes, 45 m round the green.
+  inPlay(x, y, hole){
+    if (!this.inBounds(x, y)) return false;
+    if (!hole) return true;
+    const w = hole.par <= 3 ? 30 : 40, p = hole.path;
+    for (let i = 0; i < p.length - 1; i++) if (segDist(x, y, p[i][0], p[i][1], p[i+1][0], p[i+1][1]) < w) return true;
+    const e = p[p.length - 1]; if (Math.hypot(x - e[0], y - e[1]) < 45) return true;   // over the back of the green: a bit more room
+    if (this.hit(this.fairways, x, y, 0) || this.hit(this.greens, x, y, 0) || this.hit(this.tees, x, y, 0)) return true;
+    for (const L of [this.fairways, this.greens]) for (const f of L){ const b = f.b; if (x < b[0]-6 || x > b[2]+6 || y < b[1]-6 || y > b[3]+6) continue; if (edgeDist(x, y, f.a) < 5) return true; }
+    return false;
+  }
   lie(x, y){
     if (!this.inBounds(x, y)) return 'ob';
     if (this.inWater(x, y)) return 'water';

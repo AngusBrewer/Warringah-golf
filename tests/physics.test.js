@@ -3,7 +3,6 @@
 const {GolfPhysics: P, flatCourse, check, done} = require('./harness.js');
 const avg = (n, f) => { let s = 0; for (let i = 0; i < n; i++) s += f(); return s / n; };
 const shot = (c, o) => P.fullShot(c, Object.assign({from: [0, 0], ang: 0, power: 1, lie: 'fairway'}, o));
-P.setDifficulty('standard');
 
 console.log('Full shots on a flat fairway');
 const flat = flatCourse();
@@ -18,12 +17,11 @@ const b = shot(flat, {club: 'Dr'});
 check('the ball bounces after landing', b.rollTrack.some(p => p[2] > 0.2), `first bounce ${Math.max(...b.rollTrack.map(p => p[2])).toFixed(2)} m`);
 
 console.log('Lies (Wii style: woods suffer most)');
-for (const [lie, club, lo, hi] of [['rough', 'Dr', 0.5, 0.75], ['rough', '7i', 0.7, 0.9], ['rough', 'SW', 0.8, 1], ['bunker', 'Dr', 0.2, 0.4], ['bunker', 'SW', 0.75, 0.95]]){
-  const r = P.lieRange(lie, club); check(`${club} from the ${lie}: ${Math.round(r[0] * 100)}-${Math.round(r[1] * 100)}%`, r[0] >= lo && r[1] <= hi);
-}
+const lf = (lie, club) => P.lieFactor(lie, club);
+check('the rough costs a driver more than a wedge', lf('rough', 'Dr') < lf('rough', '7i') && lf('rough', '7i') < lf('rough', 'SW'), ['Dr', '7i', 'SW'].map(c => Math.round(lf('rough', c) * 100) + '%').join(' '));
+check('a bunker costs a driver far more than a sand wedge', lf('bunker', 'Dr') < 0.75 && lf('bunker', 'SW') > 0.85, ['Dr', 'SW'].map(c => Math.round(lf('bunker', c) * 100) + '%').join(' '));
+check('the fairway costs nothing', lf('fairway', 'Dr') === 1);
 check('a rough lie shortens the shot', shot(flat, {club: '7i', lie: 'rough'}).carry < 135);
-P.setDifficulty('beginner'); const beg = P.lieRange('rough', 'Dr'); P.setDifficulty('standard');
-check('Beginner softens the rough', beg[0] > P.lieRange('rough', 'Dr')[0]);
 
 console.log('Spin');
 const top = avg(8, () => shot(flat, {club: '7i', spin: {top: 1, side: 0}}).total), back = avg(8, () => shot(flat, {club: '7i', spin: {top: -1, side: 0}}).total), none = avg(8, () => shot(flat, {club: '7i'}).total);
@@ -34,6 +32,21 @@ check('side spin curves it right', fade.rest[1] < -5, `${fade.rest[1].toFixed(1)
 const green = flatCourse({lie: () => 'green'});
 const check1 = shot(green, {club: 'PW', power: 0.8, spin: {top: -1, side: 0}});
 check('big backspin can check back on a green', check1.total < check1.carry + 0.5, `carry ${check1.carry.toFixed(1)}, total ${check1.total.toFixed(1)}`);
+
+console.log('Run-out, bounces and backspin (version 15)');
+const onGreen = flatCourse({lie: () => 'green'});
+const g7 = avg(10, () => { const r = shot(onGreen, {club: '7i'}); return r.total - r.carry; });
+check('a full 7 iron landing on a green runs a few metres, not 20', g7 > 1.5 && g7 < 6, `${g7.toFixed(1)} m`);
+const t7 = avg(10, () => shot(onGreen, {club: '7i'}).rollTrack.at(-1)[3]);
+check('...and stops within about 3 seconds', t7 < 3.5, `${t7.toFixed(1)} s`);
+const chip = avg(10, () => { const r = shot(onGreen, {club: 'SW', power: 0.3}); return r.total - r.carry; });
+check('a chip still rolls out a little on the green', chip > 0.8 && chip < 4, `${chip.toFixed(1)} m`);
+const hop = avg(10, () => Math.max(...shot(flat, {club: 'Dr'}).rollTrack.map(p => p[2])));
+check('a drive bounces visibly on the fairway', hop > 1, `${hop.toFixed(1)} m high`);
+const zipSW = avg(10, () => { const r = shot(onGreen, {club: 'SW', spin: {top: -1, side: 0}}); return r.total - r.carry; });
+check('a full sand wedge with backspin zips back on the green', zipSW < -1, `${zipSW.toFixed(1)} m`);
+const zip7 = avg(10, () => { const r = shot(onGreen, {club: '7i', spin: {top: -1, side: 0}}); return r.total - r.carry; });
+check('...more than a 7 iron does', zipSW < zip7, `7 iron ${zip7.toFixed(1)} m`);
 
 console.log('Rolling on slopes');
 const hillRough = flatCourse({lie: () => 'rough', slope: [-0.25, 0]});   // falling away 25%
@@ -49,31 +62,33 @@ const st2 = {x: 0, y: 0, vx: 0, vy: 0, t: 0}; P.roll(gentle, st2, {track: []});
 check('but stays put on a gentle slope in the rough', Math.hypot(st2.x, st2.y) < 0.05);
 
 console.log('Putting');
-const pg = (d, over, off = 0, n = 300) => { let h = 0, lin = 0, lout = 0; for (let i = 0; i < n; i++){ const range = P.puttRange(d), p = Math.pow((d + over) / range, 1 / 0.8);
+const pg = (d, over, off = 0, n = 300) => { let h = 0, lin = 0, lout = 0; for (let i = 0; i < n; i++){ const range = P.puttRange(d), p = P.puttPower(d + over);
   const r = P.putt(green, {from: [0, 0], ang: Math.atan2(off, d), power: p, max: range, pin: [d, 0]}); if (r.holed){ h++; if (r.lipIn) lin++; } else if (r.lip) lout++; } return {h: h / n, lin, lout}; };
 check('a firm, straight 3 m putt drops', pg(3, 0.5).h > 0.97);
 check('a firm, straight 9 m putt drops', pg(9, 0.6).h > 0.97);
 check('a putt that is too short stays out', pg(3, -0.4).h === 0);
-check('a putt that is far too fast hops over', pg(3, 7).h === 0);
-const mid = P.putt(green, {from: [0, 0], ang: 0, power: 0.6, max: P.puttRange(5), pin: [50, 0]});
-check('a medium (60%) stroke gets a 5 m putt to the hole', mid.rest[0] > 4.8 && mid.rest[0] < 7, `${mid.rest[0].toFixed(2)} m`);
+check('a putt that is far too fast hops over', pg(3, 9).h === 0);
+const mid = P.putt(green, {from: [0, 0], ang: 0, power: P.puttPower(5), max: P.puttRange(5), pin: [50, 0]});
+check('the putter is one fixed range: the stroke for 5 m rolls 5 m', Math.abs(mid.rest[0] - 5) < 0.3, `${Math.round(P.puttPower(5) * 100)}% → ${mid.rest[0].toFixed(2)} m`);
+check('short putts take less of the bar', P.puttPower(1) < P.puttPower(3) && P.puttPower(3) < 0.4 && P.puttPower(3) > 0.25, `1 m ${Math.round(P.puttPower(1) * 100)}%, 3 m ${Math.round(P.puttPower(3) * 100)}%`);
 // the cup is real physics now: send balls at it at set speeds and offsets
 const atCup = (v, b, flag = false) => { const mu = P.SURF.green.mu * 9.81, st = {x: -1, y: b * P.CUP, vx: Math.sqrt(v * v + 2 * mu * (1 - Math.sqrt(Math.max(0, 1 - b * b)) * P.CUP)), vy: 0, t: 0};
   const r = P.roll(green, st, {track: [], pin: [0, 0], flag}); return r.holed ? (st.lipIn ? 'lipin' : 'in') : (st.lip || 'miss'); };
 check('the cup is 10% bigger than before', Math.abs(P.CUP - 0.132) < 1e-9);
 check('dead centre at 1.2 m/s drops', atCup(1.2, 0) === 'in');
 check('dead centre at 3 m/s jumps the hole', atCup(3, 0) !== 'in');
+check('dead centre at 1.8 m/s still drops', atCup(1.8, 0) === 'in');
 check('half way out at 1.2 m/s still drops', atCup(1.2, 0.5) === 'in');
 check('catching the side slowly curls in (lip-in)', ['lipin', 'in'].includes(atCup(0.6, 0.85)), atCup(0.6, 0.85));
 check('catching the side with pace spins out (lip-out)', ['out', 'over'].includes(atCup(1.4, 0.85)), atCup(1.4, 0.85));
 check('missing the cup by a whisker stays out', atCup(1, 1.05) === 'miss');
-check('the flagstick stops a firm, central chip', atCup(2.6, 0, true) === 'in' && atCup(2.6, 0, false) !== 'in');
+check('the flagstick stops a firm, central chip', atCup(3, 0, true) === 'in' && atCup(3, 0, false) !== 'in');
 let lin = 0, lout = 0; for (let b = 0.6; b < 1; b += 0.02) for (let v = 0.4; v < 2; v += 0.1){ const r = atCup(v, b); if (r === 'lipin') lin++; if (r === 'out' || r === 'over') lout++; }
 check('across the edge of the cup, some lip in and some lip out', lin > 3 && lout > lin, `lip-ins ${lin}, lip-outs ${lout}`);
 check('a putt wide of the cup misses', pg(4, 0.3, 0.25).h === 0);
-check('putter range fits the putt', P.puttRange(1.5) === 3 && P.puttRange(4) === 8 && P.puttRange(9) === 15);
-const short = P.putt(green, {from: [0, 0], ang: 0, power: 1, max: 8, pin: [50, 0]});
-check('a full stroke rolls the putter range on a flat green', Math.abs(short.rest[0] - 8) < 0.5, `${short.rest[0].toFixed(2)} m`);
+check('the putter range is the same for every putt', P.puttRange(1.5) === P.puttRange(15));
+const fullP = P.putt(green, {from: [0, 0], ang: 0, power: 1, pin: [80, 0]});
+check('a full stroke rolls the putter range on a flat green', Math.abs(fullP.rest[0] - P.PUTT_MAX) < 0.6, `${fullP.rest[0].toFixed(2)} m`);
 
 console.log('Chip-ins');
 const chipGreen = flatCourse({lie: (x) => x > 20 ? 'green' : 'fairway'});
