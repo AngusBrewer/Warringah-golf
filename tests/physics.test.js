@@ -77,7 +77,7 @@ const atCup = (v, b, flag = false) => { const mu = P.SURF.green.mu * 9.81, st = 
 check('the cup is 10% bigger than before', Math.abs(P.CUP - 0.132) < 1e-9);
 check('dead centre at 1.2 m/s drops', atCup(1.2, 0) === 'in');
 check('dead centre at 3 m/s jumps the hole', atCup(3, 0) !== 'in');
-check('dead centre at 1.8 m/s still drops', atCup(1.8, 0) === 'in');
+check('a firm putt (2.3 m/s) straight at the middle still drops', atCup(2.3, 0) === 'in');
 check('half way out at 1.2 m/s still drops', atCup(1.2, 0.5) === 'in');
 check('catching the side slowly curls in (lip-in)', ['lipin', 'in'].includes(atCup(0.6, 0.85)), atCup(0.6, 0.85));
 check('catching the side with pace spins out (lip-out)', ['out', 'over'].includes(atCup(1.4, 0.85)), atCup(1.4, 0.85));
@@ -96,6 +96,11 @@ let chips = 0, gentlePast = 0; for (let i = 0; i < 200; i++){ const r = shot(chi
   else if (Math.abs(r.rest[1]) < 0.03 && r.rest[0] > 30 && r.rest[0] < 31.2) gentlePast++; }   // on line, and only ~1 m/s at the hole
 check('chips running at the hole can go in', chips > 5, `${chips} of 200 holed`);
 check('a chip on line at a gentle pace never rolls over the hole', gentlePast === 0, `${gentlePast} ran past`);
+
+console.log('Wind');
+const calm = shot(flat, {club: 'Dr'}), cross = shot(flat, {club: 'Dr', wind: [0, -10]}), head = shot(flat, {club: 'Dr', wind: [-10, 0]});
+check('a 10 m/s crosswind blows a drive well off line', Math.abs(cross.land[1] - calm.land[1]) > 20, `${Math.abs(cross.land[1] - calm.land[1]).toFixed(0)} m`);
+check('a 10 m/s headwind costs a drive a lot of carry', calm.carry - head.carry > 25, `${(calm.carry - head.carry).toFixed(0)} m`);
 
 console.log('Hazards and trees');
 const water = flatCourse({lie: (x) => x > 120 && x < 160 ? 'water' : 'fairway'});

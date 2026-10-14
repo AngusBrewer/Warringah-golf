@@ -27,6 +27,7 @@ It checks:
 python3 -m http.server 8765          # in this folder
 COURSE=warringah ROUND=all node tests/e2e-round.js
 COURSE=northbridge ROUND=front node tests/e2e-round.js
+COURSE=balgowlah ROUND=all node tests/e2e-round.js       # the 9-hole course
 PLAYERS=2 COURSE=warringah ROUND=quick3 node tests/e2e-round.js   # two players taking turns
 ```
 
@@ -56,7 +57,7 @@ Use the GitHub Pages address, not a file opened from disk, because phone motion 
 | 7 | Hit a ball into the rough, then look at the swing bar. | The white line on the bar drops (yellow), and the panel shows e.g. "Rough 75–85%". |
 | 8 | Tap the top of the ball on the phone (or screen), then hit an iron. | The label says Topspin; the ball runs on further after landing. Repeat with backspin: it stops quicker. |
 | 9 | Swing much harder than your full swing. | The bar shakes and the shot hooks or slices hard. |
-| 10 | On the green, press **Read**. | The slope grid shows; the camera does **not** jump overhead. Pressing Read off the green just shows a message. |
+| 10 | On the green, press **Read**. | The slope grid shows with the hole clearly marked on top (dark cup, white lip, pulsing yellow ring); the camera does **not** jump overhead. Pressing Read off the green just shows a message. |
 | 11 | Putt short, then long. | The flag comes out when you putt. Putts roll smoothly into the cup and drop. Firm putts can hit the back and jump out; balls catching the edge curl in slowly or spin out with pace. |
 | 11b | Chip from just off the green straight at the flag. | The flag stays in; a chip running at the hole at a sensible pace hits the stick or drops in rather than rolling over. |
 | 12 | Lock the phone for 10 seconds, then unlock it. | The phone reconnects by itself. If not, use **Phone code → Make a new code** and rescan. |

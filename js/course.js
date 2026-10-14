@@ -40,6 +40,7 @@ class Course {
     const mk = list => (list || []).map(a => ({a, b: bbox(a)}));
     this.greens = mk(data.greens); this.tees = mk(data.tees); this.fairways = mk(data.fairways);
     this.bunkers = mk(data.bunkers); this.water = mk(data.water); this.bounds = mk(data.bounds);
+    this.obs = mk(data.ob);            // extra out-of-bounds areas inside the property (e.g. Balgowlah's oval)
     this.creeks = (data.creeks || []).map(a => ({a, b: bbox(a)}));
     this.extent = this.bounds.reduce((e, p) => [Math.min(e[0], p.b[0]), Math.min(e[1], p.b[1]), Math.max(e[2], p.b[2]), Math.max(e[3], p.b[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     this.trees = this.buildTrees(); if (window.GolfTrees) GolfTrees.dress(this.trees);
@@ -48,7 +49,7 @@ class Course {
   }
   key(x, y){ return Math.floor(x / 20) + ',' + Math.floor(y / 20); }
   hit(list, x, y, pad = 0){ for (const p of list){ const b = p.b; if (x < b[0]-pad || x > b[2]+pad || y < b[1]-pad || y > b[3]+pad) continue; if (pip(x, y, p.a)) return p; } return null; }
-  inBounds(x, y){ return !!this.hit(this.bounds, x, y); }
+  inBounds(x, y){ return !!this.hit(this.bounds, x, y) && !this.hit(this.obs, x, y); }
   inWater(x, y){
     if (this.hit(this.water, x, y)) return true;
     for (const c of this.creeks){ const b = c.b; if (x < b[0]-4 || x > b[2]+4 || y < b[1]-4 || y > b[3]+4) continue; if (lineDist(x, y, c.a) < 2.6) return true; }

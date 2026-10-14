@@ -96,10 +96,11 @@ class GolfScene {
       g.save(); g.globalAlpha = 0.28; for (const b of d.bunkers){ path(b); g.fillStyle = PAL.sand; g.fill(); } g.restore();
     }
     g.lineCap = 'round'; g.lineJoin = 'round';
-    for (const cr of d.creeks){ line(cr); g.strokeStyle = PAL.waterEdge; g.lineWidth = 6.5 * S; g.stroke(); line(cr); g.strokeStyle = PAL.water; g.lineWidth = 4.6 * S; g.stroke(); }
+    if (photo) for (const cr of d.creeks){ line(cr); g.strokeStyle = 'rgba(38, 66, 58, 0.55)'; g.lineWidth = 3.4 * S; g.stroke(); }   // the photo shows the real creek: just darken its bed
+    else for (const cr of d.creeks){ line(cr); g.strokeStyle = PAL.waterEdge; g.lineWidth = 6.5 * S; g.stroke(); line(cr); g.strokeStyle = PAL.water; g.lineWidth = 4.6 * S; g.stroke(); }
     // white out-of-bounds line
     g.setLineDash([2*S, 3*S]); g.strokeStyle = PAL.ob; g.lineWidth = 0.6 * S;
-    for (const b of d.bounds){ path(b); g.stroke(); } g.setLineDash([]);
+    for (const b of d.bounds.concat(d.ob || [])){ path(b); g.stroke(); } g.setLineDash([]);
     // tree shadows baked into the ground, cast away from the sun
     { const sx = -SUN.x / SUN.y, sy = SUN.z / SUN.y;         // ground offset per metre of height (course x, y)
       // drawn solid on their own layer (so overlapping shadows don't stack), then blurred onto the ground once
@@ -202,6 +203,14 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
     bottom.position.y = 0.014 - 0.105; bottom.renderOrder = -2; grp.add(bottom);
     this.cupGlow = new THREE.Mesh(new THREE.RingGeometry(R, R + 0.012, 32).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4}));
     this.cupGlow.position.y = 0.015; grp.add(this.cupGlow);
+    // while reading the green: the hole drawn on top of the slope grid (dark cup, white lip, and a
+    // bright target ring) so it is easy to find
+    const rc = this.readCup = new THREE.Group(); rc.visible = false; grp.add(rc);
+    const top = (m, o) => Object.assign(m, {depthWrite: false, polygonOffset: true, polygonOffsetFactor: o, polygonOffsetUnits: o});
+    const hole = new THREE.Mesh(new THREE.CircleGeometry(R, 32).rotateX(-Math.PI/2), top(new THREE.MeshBasicMaterial({color: '#141a12'}), -8));
+    const lip = new THREE.Mesh(new THREE.RingGeometry(R, R + 0.03, 32).rotateX(-Math.PI/2), top(new THREE.MeshBasicMaterial({color: '#ffffff'}), -8));
+    const tgt = new THREE.Mesh(new THREE.RingGeometry(R * 3.2, R * 3.2 + 0.07, 48).rotateX(-Math.PI/2), top(new THREE.MeshBasicMaterial({color: '#ffe066', transparent: true, opacity: 0.95}), -8));
+    [hole, lip, tgt].forEach(m => { m.position.y = 0.03; m.renderOrder = 4; rc.add(m); }); this.readTarget = tgt;
     // tall marker so the pin is visible from the tee
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 26, 8, 1, true), new THREE.MeshBasicMaterial({color: '#ffe066', transparent: true, opacity: 0.35, depthWrite: false}));
     beam.position.y = 16; grp.add(beam); this.beam = beam;
@@ -369,6 +378,7 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
   }
   showRead(i, on){
     this.reads.forEach((r, k) => { r.visible = on && k === i; });
+    if (this.readCup) this.readCup.visible = !!on;
     const r = this.reads[i]; if (on && r && !r.material.map){ r.material.map = GolfGreens.readTexture(this.fields[i], r.userData.size, r.userData.origin); r.material.needsUpdate = true; }
   }
   showAim(from, ang, dist, putt){
@@ -403,6 +413,7 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
     if (opts.snap){ this.camPos.copy(this.camGoalPos); this.camLook.copy(this.camGoalLook); }
   }
   frame(dt, t){
+    if (this.readCup && this.readCup.visible){ const k = 1 + 0.12 * Math.sin(t * 4); this.readTarget.scale.set(k, 1, k); }   // gentle pulse
     const k = 1 - Math.pow(0.0015, dt);
     this.camPos.lerp(this.camGoalPos, k); this.camLook.lerp(this.camGoalLook, k);
     this.camera.position.copy(this.camPos); this.camera.lookAt(this.camLook); this.sky.position.copy(this.camPos); this.trees.update(this.camPos);

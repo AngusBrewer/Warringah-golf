@@ -27,7 +27,7 @@ const LIE_NAME = {tee:'Tee', fairway:'Fairway', fringe:'Fringe', green:'Green', 
 // One setting for everyone (version 15). It keeps the putting, cup and green-reading feel of the old
 // Beginner level, with more of the wind and the curve on hooks and slices.
 const DIFFICULTY = {
-  game: {lie: 0.6, curve: 0.75, wind: 0.75, brk: 0.7, gimme: 0.6, leaves: 1.25, lipIn: 1.4}
+  game: {lie: 0.6, curve: 0.75, wind: 1.4, brk: 0.7, gimme: 0.6, leaves: 1.25, lipIn: 1.4}
 };
 let D = DIFFICULTY.game;
 function setDifficulty(){ return D; }   // kept so older callers don't break
@@ -92,7 +92,7 @@ const FLAG_R = 0.0125, FLAG_H = 2.1;
 // The cup and ball are drawn bigger than real, so the fall is scaled to keep real capture speeds:
 // a putt dead at the middle drops up to about 1.6 m/s (as measured on real greens), less off-centre;
 // with the flagstick in (chips and full shots) a central ball holds up to about 2.8 m/s.
-const CUP_G = 2.5;
+const CUP_G = 2.5;   // (v16: a softer rim, so firm putts at the middle drop more often: up to ~2.4 m/s)
 function cupStep(st, cup, dt, flag){
   const Rc = CUP, Rb = BALL_R, g = CUP_G * D.lipIn;
   st.vz += g * dt; st.z += st.vz * dt; st.x += st.vx * dt; st.y += st.vy * dt;
@@ -118,7 +118,7 @@ function cupStep(st, cup, dt, flag){
     if (d < Rb && d > 1e-9){
       const nx = -ux * gh / d, ny = -uy * gh / d, nz = vz / d, push = Rb - d;
       st.x += nx * push; st.y += ny * push; st.z -= nz * push;
-      hit(nx, ny, nz, hc > 0 ? 0.45 : 0.3, 0.85, hc > 0 ? 'rimHit' : 'wallHit');
+      hit(nx, ny, nz, 0.3, 0.85, hc > 0 ? 'rimHit' : 'wallHit');
     }
     if (st.z >= CUP_DEPTH){ st.z = CUP_DEPTH; st.vz = 0; st.vx *= 0.5; st.vy *= 0.5; }   // the bottom
   } else if (st.z > 0){

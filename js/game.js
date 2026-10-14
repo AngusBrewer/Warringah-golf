@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 15;
+const VERSION = 17;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -125,7 +125,7 @@ function holesFor(spec, n){
   if (typeof spec === 'number' || /^\d+$/.test(spec)){ const k = Math.max(1, Math.min(n, Number(spec))) - 1; return [k]; }
   return all;
 }
-function roundLabel(spec){ return spec === 'front' ? 'Front 9' : spec === 'back' ? 'Back 9' : spec === 'quick3' ? '3 holes' : (typeof spec === 'number' || /^\d+$/.test(spec)) ? `Hole ${spec}` : '18 holes'; }
+function roundLabel(spec, n = 18){ return spec === 'front' ? 'Front 9' : spec === 'back' ? 'Back 9' : spec === 'quick3' ? '3 holes' : (typeof spec === 'number' || /^\d+$/.test(spec)) ? `Hole ${spec}` : `${n} holes`; }
 function startRound(id, resume, spec = 'all'){
   if (!store.get('wgolf-onboarded', false) && !guide.open){ guide.show(0, {id, resume, spec}); return; }
   if (scene && scene.course.d.id !== id){ try { sessionStorage.setItem('wgolf-start', JSON.stringify({id, resume, spec})); } catch {} location.reload(); return; }
@@ -148,7 +148,7 @@ function startRound(id, resume, spec = 'all'){
     nPlayers = saved.players ? saved.players.length : 1; players = Array.from({length: nPlayers}, (_, i) => newPlayer(i));
     players.forEach((p, i) => { p.scores = saved.players ? saved.players[i] : saved.scores; });
     roundHoles = saved.holes || holesFor('all', course.d.holes.length); roundName = saved.name || '18 holes'; first = saved.hole;
-  } else { players = Array.from({length: nPlayers}, (_, i) => newPlayer(i)); roundHoles = holesFor(spec, course.d.holes.length); roundName = roundLabel(spec); first = roundHoles[0]; }
+  } else { players = Array.from({length: nPlayers}, (_, i) => newPlayer(i)); roundHoles = holesFor(spec, course.d.holes.length); roundName = roundLabel(spec, course.d.holes.length); first = roundHoles[0]; }
   players.forEach((p, i) => { p.cal = i === cur ? {...cal} : p.cal; });
   loadPlayer(0); pairText(); linkLabel();
   $('#menu').hidden = true; $('#hud').hidden = false;
@@ -275,9 +275,10 @@ function faceToSide(face, putt){
   // treat your usual swing as straight: subtract the median of your recent swings
   if (!putt && recentFaces.length >= 3){ const s = [...recentFaces].sort((a,b) => a-b); f -= s[s.length >> 1]; }
   if (settings.flip) f = -f;
-  if (putt) return Math.max(-6, Math.min(6, f * 0.25)) * k;   // degrees of aim error
-  const eff = Math.sign(f) * Math.max(0, Math.abs(f) - 7);        // ignore the first 7° either way
-  return eff * k * 1.2;
+  if (putt) return Math.max(-8, Math.min(8, f * 0.32)) * k * 1.6;   // degrees of aim error
+  // full shots (v16: the screen is the face, so read it more keenly): ignore only the first 4°
+  const eff = Math.sign(f) * Math.max(0, Math.abs(f) - 4);
+  return eff * k * 2.0;
 }
 function onSwing(m){
   if (mode !== 'aim') return;
@@ -319,7 +320,9 @@ function launch(power, faceSide, over){
     side = dir * (0.17 + Math.random() * 0.1) * k * C.max * power * Math.max(0.55, C.curve); banner(dir > 0 ? 'Overswing! Big slice.' : 'Overswing! Big hook.'); }
   const lr = GolfPhysics.lieRange(lie, club), lieK = lr[0] + Math.random() * (lr[1] - lr[0]);
   shotInfo = {club, lie, from: ball.slice(), power, over, lieK, spin: {...spin}, aim};
-  const r = GolfPhysics.fullShot(course, {from: ball, ang: aim, club, power, lie, lieK, wind: windV, side, pin, spin, field: scene.fields[hole.green]});
+  // the face also starts the ball off line: an open face pushes it right, a closed one pulls it left
+  const push = over ? 0 : Math.max(-6, Math.min(6, faceSide * 0.22)) * Math.PI / 180;
+  const r = GolfPhysics.fullShot(course, {from: ball, ang: aim - push, club, power, lie, lieK, wind: windV, side, pin, spin, field: scene.fields[hole.green]});
   animateFlight(r);
 }
 
@@ -586,17 +589,17 @@ window.addEventListener('keyup', e => {
   if (e.key === ' ' && spaceDown){ const p = Math.min(1, (performance.now() - spaceDown) / 1200); spaceDown = 0; if (mode === 'aim'){ meter.final(p); takeShot(p, 0, false); } }
 });
 // Aim: a tap nudges it a fraction of a degree; holding turns it slowly at first and speeds up the
-// longer you hold (full shots: 2°/s rising to 14°/s over 2.5 s; putts a third of that).
+// longer you hold: 2.5°/s rising to 17°/s over 2 s, the same for putts and full shots.
 let aimSince = 0;
 function setAimHeld(d){
-  if (d && d !== aimHeld && mode === 'aim'){ aim += d * (club === 'Pt' ? 0.1 : 0.25) * Math.PI / 180; setView(); updateHUD(); }
+  if (d && d !== aimHeld && mode === 'aim'){ aim += d * (club === 'Pt' ? 0.2 : 0.3) * Math.PI / 180; setView(); updateHUD(); }
   aimHeld = d; aimSince = performance.now();
 }
 function stepAim(dt){
   if (!aimHeld || mode !== 'aim') return;
   const held = (performance.now() - aimSince) / 1000;
-  if (held < 0.25) return;                                    // a quick tap is just the nudge
-  const degPerSec = (2 + 12 * Math.min(1, (held - 0.25) / 2.5)) * (club === 'Pt' ? 0.33 : 1);
+  if (held < 0.2) return;                                     // a quick tap is just the nudge
+  const degPerSec = 2.5 + 14.5 * Math.min(1, (held - 0.2) / 2);
   aim += (aimHeld > 0 ? 1 : -1) * degPerSec * Math.PI / 180 * dt;    // +1 = left (anticlockwise seen from above)
   setView(); updateHUD();
 }
@@ -667,7 +670,7 @@ function initMenu(){
     const id = el.dataset.course, rb = el.querySelector('.resume'), sel = el.querySelector('.roundSel');
     if (sel && !sel.options.length){
       const n = window.COURSES[id].holes.length;
-      sel.innerHTML = `<option value="all">18 holes</option><option value="front">Front 9</option><option value="back">Back 9</option><option value="quick3">Quick 3 holes</option>` +
+      sel.innerHTML = (n > 9 ? `<option value="all">18 holes</option><option value="front">Front 9</option><option value="back">Back 9</option>` : `<option value="all">${n} holes</option>`) + `<option value="quick3">Quick 3 holes</option>` +
         Array.from({length: n}, (_, i) => `<option value="${i + 1}">Hole ${i + 1} only</option>`).join('');
     }
     rb.hidden = !(saved && saved.course === id && saved.hole != null && (saved.scores || []).some(v => v != null));

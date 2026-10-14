@@ -200,7 +200,10 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
         <div><b>Northbridge Golf Club</b><br><span>Middle Harbour · 18 holes · par 64</span></div>
         <div class="acts"><button class="btnp resume" hidden>Resume</button><div class="pick"><select class="roundSel" aria-label="Round"></select><button class="primary play">Play</button></div></div>
       </div>
-      <div class="course soon"><div><b>Balgowlah Golf Club</b><br><span>9 holes · coming next</span></div></div>
+      <div class="course" data-course="balgowlah" data-name="Balgowlah">
+        <div><b>Balgowlah Golf Club</b><br><span>North Balgowlah · 9 holes · par 32</span></div>
+        <div class="acts"><button class="btnp resume" hidden>Resume</button><div class="pick"><select class="roundSel" aria-label="Round"></select><button class="primary play">Play</button></div></div>
+      </div>
     </div>
     <div class="opts">
       <label>Players <select id="playersSel"><option value="1">1 player</option><option value="2">2 players (two phones)</option></select></label>
@@ -211,7 +214,7 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
         <label>Hook and slice <select id="curveSel"><option value="off">Off</option><option value="gentle">Gentle</option><option value="full">Full</option></select></label>
         <a href="lab.html">Swing Lab (fine-tune your swing)</a></div></details>
     </div>
-    <div class="menuFoot"><span>Tap the pad on your phone, hold still for a moment, then swing.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Elevation © Geoscience Australia and Spatial Services NSW · Northbridge aerial photo © Spatial Services NSW · Trees traced from Esri World Imagery</span></div>
+    <div class="menuFoot"><span>Tap the pad on your phone, hold still for a moment, then swing.</span><span><span id="ver"></span> · Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Elevation © Geoscience Australia and Spatial Services NSW · Northbridge and Balgowlah aerial photos © Spatial Services NSW · Trees traced from Esri World Imagery</span></div>
   </div>
 </div>
 
@@ -259,6 +262,8 @@ kbd{font:600 12px/1 var(--body);border:1px solid var(--panel-line);background:#f
 <script src="courses/warringah-elev.js"></script>
 <script src="courses/northbridge.js"></script>
 <script src="courses/northbridge-elev.js"></script>
+<script src="courses/balgowlah.js"></script>
+<script src="courses/balgowlah-elev.js"></script>
 <script src="js/course.js"></script>
 <script src="js/terrain.js"></script>
 <script src="js/trees.js"></script>

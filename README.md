@@ -1,6 +1,6 @@
 # Northside Golf (Warringah Golf)
 
-A Wii-golf-style game you play in the browser, with your phone as the club. Two real Sydney courses: Warringah (North Manly) and Northbridge.
+A Wii-golf-style game you play in the browser, with your phone as the club. Three real Sydney courses: Warringah (North Manly, 18 holes), Northbridge (18 holes) and Balgowlah (North Balgowlah, 9 holes).
 
 ## Playing
 
@@ -37,6 +37,7 @@ Out of bounds (stroke and distance) is anywhere off the property, or a ball that
 - `tools/`: course builders.
   - Warringah: `build_course.py`.
   - Northbridge: `build_northbridge.py`.
+  - Balgowlah: `build_balgowlah.py` (OpenStreetMap only has the boundary, pond and creek there; tees and greens were found by matching the player's hole-by-hole phone screenshots to the aerial photo, greens snapped to the LiDAR's raised pads, bunkers and fairways traced off the photo).
   - Elevation: `build_elev.py <course> [max green slope]` (5 m data), or `build_elev1m.py <course> <tiles.tif…>` for NSW 1 m LiDAR tiles downloaded from Elvis (elevation.fsdf.org.au).
   - Ground photo: `build_photo.py <course> <photo> x0 y0 x1 y1` (NSW aerial imagery resampled to course metres at 3 px/m).
   - Trees: `canopy.py`, which traces them from aerial imagery.
@@ -49,6 +50,6 @@ It is a static site, so GitHub Pages serves it as is. There is no build step. Up
 ## Credits
 
 - Course map data © OpenStreetMap contributors (ODbL).
-- Elevation © Geoscience Australia (CC BY 4.0); Northbridge 1 m LiDAR and aerial photo © Spatial Services NSW (CC BY 4.0).
+- Elevation © Geoscience Australia (CC BY 4.0); Northbridge and Balgowlah 1 m LiDAR and aerial photos © Spatial Services NSW (CC BY 4.0).
 - Tree positions and the Northbridge harbour traced from Esri World Imagery.
 - Uses three.js, PeerJS and qrcode-generator (vendored).
