@@ -65,6 +65,8 @@ Use the GitHub Pages address, not a file opened from disk, because phone motion 
 | 14 | Menu while mid-round, then **Resume**. | You go back to the same hole with your scores. |
 | 15 | No phone: in the pairing window, press **Play with keyboard**. | Arrow keys aim and change club; holding Space and letting go swings. |
 | 17 | Menu → Players: **2 players**. Play, then scan the code with a second phone. | Each phone says Player 1 / Player 2. The chip shows "P1 ✓ P2 ✓". Only the player whose turn it is can swing; the other phone says to wait. |
+| 19 | Aim a full shot. | Five white dots run out to the yellow landing ring on the ground, and the mini map shows the same five dots and ring, so a dot can be lined up with something on the map. |
+| 20 | Hit a drive down a fairway. | It kicks up a couple of metres on the first bounce, takes a smaller hop, then rolls out and slows evenly to a stop. |
 | 18 | Finish a hole with two players. | The scorecard shows a row for each player; at the end of the round it names the winner. |
 
 ## Not covered by the automated tests

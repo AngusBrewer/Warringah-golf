@@ -1,7 +1,7 @@
 // Game flow: holes, shots, scoring, the phone link and the on-screen panels.
 (function(){
 'use strict';
-const VERSION = 17;
+const VERSION = 18;
 const {CLUBS, ORDER, LIE_NAME} = window.GolfPhysics;
 const $ = s => document.querySelector(s);
 const store = {
@@ -508,8 +508,7 @@ function updateHUD(){
   $('#windArrow').style.transform = `rotate(${(aim - Math.atan2(windV[1], windV[0])) * 180 / Math.PI}deg)`;
   $('#windArrow').style.opacity = ws < 0.3 ? 0.25 : 1;
   if (mode === 'aim'){
-    const reach = C.putt ? Math.min(d, puttMax()) : C.max * GolfPhysics.lieFactor(lie, club);
-    scene.showAim(ball, aim, C.putt ? Math.min(d + 0.5, puttMax()) : Math.min(reach, Math.max(reach * 0.5, d)), C.putt);
+    scene.showAim(ball, aim, aimLen(), C.putt);
   }
   $('#spinBox').hidden = !(mode === 'aim' && !C.putt);
   $('#hint').textContent = mode === 'aim' ? (phoneOk ? (C.putt ? 'Tap the pad, settle, then putt.' : 'Tap the pad, settle, then swing.') : 'Link your phone, or hold Space to swing.') : '';
@@ -537,6 +536,14 @@ function showScorecard(final){
   $('#scoreModal').hidden = false;
 }
 
+// how far the aim guide reaches: the club's full distance from this lie (to the pin if that's closer,
+// but never under half the club), or just past the hole for a putt. The ground and the map show the same.
+function aimLen(){
+  const C = CLUBS[club], d = dist(ball, pin);
+  if (C.putt) return Math.min(d + 0.5, puttMax());
+  const reach = C.max * GolfPhysics.lieFactor(lie, club);
+  return Math.min(reach, Math.max(reach * 0.5, d));
+}
 // ---------- mini map ----------
 function drawMini(){
   const cv = $('#mini'), g = cv.getContext('2d'), w = cv.width, h = cv.height;
@@ -559,10 +566,13 @@ function drawMini(){
   g.fillStyle = '#2c5e2a'; const near = course.trees.filter(t => dist([t.x, t.y], ball) < 700);
   near.forEach(t => { const p = T([t.x, t.y]); g.beginPath(); g.arc(p[0], p[1], Math.max(1.2, t.r * sc), 0, Math.PI * 2); g.fill(); });
   // aim line
-  if (mode === 'aim'){ const C = CLUBS[club], L = C.putt ? Math.min(puttMax(), dist(ball, pin) + 0.5) : C.max * GolfPhysics.lieFactor(lie, club);
-    const b = T(ball), e = T([ball[0] + Math.cos(aim) * L, ball[1] + Math.sin(aim) * L]);
-    g.strokeStyle = 'rgba(255,255,255,.9)'; g.setLineDash([4, 4]); g.lineWidth = 2; g.beginPath(); g.moveTo(b[0], b[1]); g.lineTo(e[0], e[1]); g.stroke(); g.setLineDash([]);
-    g.strokeStyle = '#ffe066'; g.lineWidth = 2; g.beginPath(); g.arc(e[0], e[1], 6, 0, Math.PI * 2); g.stroke(); }
+  // aim: the same dots as on the ground, out to the landing ring
+  if (mode === 'aim'){ const C = CLUBS[club], L = aimLen(), at = s => T([ball[0] + Math.cos(aim) * s, ball[1] + Math.sin(aim) * s]);
+    const b = T(ball), e = at(L);
+    g.strokeStyle = 'rgba(255,255,255,.45)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(b[0], b[1]); g.lineTo(e[0], e[1]); g.stroke();
+    if (!C.putt) for (let k = 1; k <= window.AIM_DOTS; k++){ const q = at(L * k / (window.AIM_DOTS + 1));
+      g.fillStyle = '#fff'; g.strokeStyle = 'rgba(20,35,15,.85)'; g.lineWidth = 1.5; g.beginPath(); g.arc(q[0], q[1], 4.2, 0, Math.PI * 2); g.fill(); g.stroke(); }
+    g.strokeStyle = '#ffe066'; g.lineWidth = 2.5; g.beginPath(); g.arc(e[0], e[1], 7, 0, Math.PI * 2); g.stroke(); }
   const fp = T(pin); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(fp[0], fp[1]); g.lineTo(fp[0], fp[1] - 14); g.stroke();
   g.fillStyle = '#e23b2e'; g.beginPath(); g.moveTo(fp[0], fp[1] - 14); g.lineTo(fp[0] + 9, fp[1] - 11); g.lineTo(fp[0], fp[1] - 8); g.fill();
   const bp = T(ball); g.fillStyle = '#fff'; g.strokeStyle = '#111'; g.lineWidth = 1.5; g.beginPath(); g.arc(bp[0], bp[1], 4, 0, Math.PI * 2); g.fill(); g.stroke();

@@ -57,18 +57,21 @@ function puttRange(){ return PUTT_MAX; }
 function puttPower(d){ return Math.pow(Math.max(0, d) / PUTT_MAX, 1 / PUTT_EXP); }
 
 // ---- the ground: bounce and rolling resistance per lie ----
-// e: how much of the vertical speed comes back up; keep: horizontal speed kept per bounce;
-// mu: rolling resistance (deceleration = mu * g). Greens are quick, rough grabs the ball.
+// e1: how much of the real descent speed comes back up on the first bounce (the turf soaks up most of
+// a steep landing); e: the same for the smaller hops after it; keep: speed along the ground kept per
+// hop; mu: rolling resistance (deceleration = mu * g). Greens are quick, rough grabs the ball.
+// (v18: higher bounces, from the ball's real descent: a drive kicks up about 3 m on a fairway.)
 const SURF = {
-  green:   {e: 0.22, keep: 0.6,  mu: 0.052},
-  fringe:  {e: 0.26, keep: 0.62, mu: 0.08},
-  fairway: {e: 0.4,  keep: 0.65, mu: 0.12},
-  tee:     {e: 0.4,  keep: 0.65, mu: 0.12},
-  rough:   {e: 0.16, keep: 0.45, mu: 0.18},
-  bunker:  {e: 0,    keep: 0,    mu: 9},
-  water:   {e: 0,    keep: 0,    mu: 9},
-  ob:      {e: 0.3,  keep: 0.6,  mu: 0.15}
+  green:   {e1: 0.2,  e: 0.3,  keep: 0.7,  mu: 0.052},
+  fringe:  {e1: 0.24, e: 0.32, keep: 0.7,  mu: 0.08},
+  fairway: {e1: 0.32, e: 0.4,  keep: 0.8,  mu: 0.12},
+  tee:     {e1: 0.32, e: 0.4,  keep: 0.8,  mu: 0.12},
+  rough:   {e1: 0.18, e: 0.25, keep: 0.55, mu: 0.18},
+  bunker:  {e1: 0,    e: 0,    keep: 0,    mu: 9},
+  water:   {e1: 0,    e: 0,    keep: 0,    mu: 9},
+  ob:      {e1: 0.3,  e: 0.35, keep: 0.7,  mu: 0.15}
 };
+const QDRAG = 0.02;   // a ball rolling faster than 4 m/s (down a long bank) is slowed a little more
 const surf = l => SURF[l] || SURF.rough;
 const STOP = l => l === 'water' || l === 'ob' || l === 'bunker';
 
@@ -176,7 +179,7 @@ function roll(course, st, opts){
     }
     // rolling resistance slows the ball but never pushes it backwards
     // (plus a little drag, so a ball tumbling down a long bank doesn't run away)
-    if (sp > 1e-6){ const dv = (fr + (opts.drag || 0) * sp + (sp > 4 ? 0.02 * (sp - 4) * (sp - 4) : 0)) * dt; if (dv >= sp){ st.vx = 0; st.vy = 0; } else { st.vx -= st.vx / sp * dv; st.vy -= st.vy / sp * dv; } }
+    if (sp > 1e-6){ const dv = (fr + (opts.drag || 0) * sp + (sp > 4 ? QDRAG * (sp - 4) * (sp - 4) : 0)) * dt; if (dv >= sp){ st.vx = 0; st.vy = 0; } else { st.vx -= st.vx / sp * dv; st.vy -= st.vy / sp * dv; } }
     st.vx += pull[0] * dt; st.vy += pull[1] * dt;
     // step in pieces near the hole so a quick ball can't skip over it
     const nearCup = pin && Math.hypot(st.x - pin[0], st.y - pin[1]) < CUP + sp * dt + 0.05;
@@ -192,26 +195,45 @@ function roll(course, st, opts){
   return {lie, holed: false};
 }
 
-// Bounces after landing: each one loses height and speed depending on the surface.
-// Returns the speed left for rolling, or null if the ball stopped dead (bunker, water).
+// The ball meets the ground: velocity (st.vx, st.vy, -down) bounces off the real slope there. Along the
+// ground it keeps `keep` of its speed, and `e` of its speed into the ground comes back out, so a ball
+// landing on a downslope kicks on and one landing into a bank stops. Returns the upward speed.
+function contact(course, st, down, e, keep){
+  let gx = 0, gy = 0;
+  if (course.terrain){ const H = (x, y) => course.terrain.height(x, y), d = 1.5;
+    gx = (H(st.x + d, st.y) - H(st.x - d, st.y)) / (2 * d); gy = (H(st.x, st.y + d) - H(st.x, st.y - d)) / (2 * d);
+    const gl = Math.hypot(gx, gy); if (gl > 0.5){ gx *= 0.5 / gl; gy *= 0.5 / gl; } }
+  const nl = Math.hypot(gx, gy, 1), nx = -gx / nl, ny = -gy / nl, nz = 1 / nl;
+  const vn = st.vx * nx + st.vy * ny - down * nz;
+  if (vn >= 0){ st.vx *= keep; st.vy *= keep; return 0; }
+  const tx = st.vx - vn * nx, ty = st.vy - vn * ny, tz = -down - vn * nz;
+  st.vx = tx * keep - e * vn * nx; st.vy = ty * keep - e * vn * ny;
+  return Math.max(0, tz * keep - e * vn * nz);
+}
+// How far a ball runs on flat ground after its first bounce, given the speed up (vz) and along (u):
+// the hops that follow plus the roll. Used to set the run-out (see fullShot).
+function flatRun(S, vz, u){
+  let d = 0;
+  for (let n = 0; n < 8 && vz >= 1.0; n++){ d += u * 2 * vz / G; vz *= S.e; u *= S.keep; }
+  const dt = 1 / 60;
+  for (let i = 0; i < 6000 && u > 0; i++){ d += u * dt; u -= (S.mu * G + (u > 4 ? QDRAG * (u - 4) * (u - 4) : 0)) * dt; }
+  return d;
+}
+function speedForRun(S, vz, R){
+  let lo = 0, hi = 60;
+  for (let k = 0; k < 30; k++){ const m = (lo + hi) / 2; if (flatRun(S, vz, m) < R) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+
+// Hops after the first bounce: st holds the speed along the ground, vz the speed up. Each landing
+// loses height and pace depending on the surface and bounces off the real slope.
+// Returns the lie where it settles into a roll (or stopped dead: bunker, water).
 function bounce(course, st, vz, opts){
   const track = opts.track;
-  let first = true;
-  for (let n = 0; n < 6; n++){
+  for (let n = 0; n < 8; n++){
     const lie = course.lie(st.x, st.y);
     if (STOP(lie)) return lie;
-    const S = surf(lie);
-    vz = vz * S.e;
-    let keep = S.keep;
-    // spin acts on the first bounce: topspin kicks forward, backspin bites (and can check back on a green)
-    let zip = 0;
-    if (first && opts.spin){ const t = opts.spin, soft = lie === 'green' || lie === 'fringe';
-      if (t > 0) keep *= 1 + 0.35 * t;
-      else if (soft && t < -0.25) zip = opts.zip || 0;          // the wedge bites and the ball spins back toward you
-      else keep *= Math.max(0.05, 1 + 0.8 * t); }               // on grass it just stops quickly
-    if (zip){ const sp = Math.hypot(st.vx, st.vy) || 1; st.vx = -st.vx / sp * zip; st.vy = -st.vy / sp * zip; vz *= 0.6; }
-    else { st.vx *= keep; st.vy *= keep; }
-    first = false;
+    if (n > 0){ const S = surf(lie); vz = contact(course, st, vz, S.e, S.keep); }
     if (vz < 1.0) return lie;                          // too small to leave the ground: it rolls from here
     const tb = 2 * vz / G, steps = Math.max(4, Math.round(tb / 0.04));
     const H = course.terrain ? (x, y) => course.terrain.height(x, y) : () => 0, z0 = H(st.x, st.y);
@@ -251,7 +273,10 @@ function fullShot(course, s){
   const apex = C.apex * Math.max(0.25, Math.min(1, carry / C.max)) * (s.lie === 'bunker' ? 0.9 : 1) * (1 - 0.15 * top);
   // the ball flies over real ground: it lands sooner going uphill and later going downhill
   const H = course.terrain ? (x, y) => course.terrain.height(x, y) : () => 0, z0 = H(s.from[0], s.from[1]);
-  const pos = t => { const a = carry * t, sd = curve * t * t + drift * t, x = s.from[0] + ux*a + rx*sd, y = s.from[1] + uy*a + ry*sd;
+  // air drag: the ball leaves fast and slows down, so it peaks past halfway and comes down steeper
+  // than it went up (a drive lands at about 40 degrees)
+  const KD = 0.9, W = t => (1 - Math.exp(-KD * t)) / (1 - Math.exp(-KD)), Wd = t => KD * Math.exp(-KD * t) / (1 - Math.exp(-KD));
+  const pos = t => { const a = carry * W(t), sd = curve * t * t + drift * t, x = s.from[0] + ux*a + rx*sd, y = s.from[1] + uy*a + ry*sd;
     return [x, y, z0 + apex * 4 * t * (1 - t) - H(x, y)]; };          // [x, y, height above the ground there]
   const samples = [], seen = new Set(); let hitTree = null, leaves = 0, dropped = null;
   const N = Math.max(40, Math.round(carry / 2));
@@ -276,7 +301,7 @@ function fullShot(course, s){
       }
     }
   }
-  let vxL = (ux * carry + rx * (2 * curve * landT + drift)) / T, vyL = (uy * carry + ry * (2 * curve * landT + drift)) / T;   // ground speed at landing
+  let vxL = (ux * carry * Wd(landT) + rx * (2 * curve * landT + drift)) / T, vyL = (uy * carry * Wd(landT) + ry * (2 * curve * landT + drift)) / T;   // ground speed at landing
   let vzL = 4 * apex * (2 * landT - 1) / T;
   if (dropped){
     // horizontal speed along the shot, plus any sideways drift, scaled down by the leaves
@@ -303,35 +328,42 @@ function fullShot(course, s){
     samples.push([land[0], land[1], 0]);
     vxL = ux * 0.8; vyL = uy * 0.8; vzL = 2;
   }
-  // ---- bounce and run out ----
-  // The flight above has no air drag, so its landing speed is too high. Instead, the ball comes down with
-  // the speed that gives each club its usual run-out on a flat fairway (driver ~12% of carry), scaled
-  // by spin; the bounces and the roll then play out on the real ground, lies and slopes.
-  // The speed it keeps after the first bounce sets the run-out: on a fairway it runs about RUN x carry x the
-  // club's roll; greens are receptive (they take pace off the landing) and rough grabs it. Spin then acts on
-  // the first bounce (see bounce); drag in the roll stops it running on for ages.
-  const RUN = 1.15, LAND = {green: 0.6, fringe: 0.7, fairway: 1, tee: 1, rough: 0.75, ob: 0.8};
+  // ---- bounce and run out (v18) ----
+  // The ball comes down at its real descent speed, so the first bounce is as high as a real one (a drive
+  // kicks up about 3 m off a fairway, a wedge into a green under a metre) and later hops die away. The pace
+  // it keeps along the ground is set so that, on flat ground, the hops plus the roll come to the club's
+  // usual run-out for the lie: about 9% of carry for a driver, 5% for a 7 iron, more for chips; greens
+  // and rough take most of it away. Slopes then do the rest (a downslope kicks it on, a bank stops it),
+  // and the roll slows at a steady rate, like a real ball, instead of braking hard and creeping.
+  const RO = {Dr: 0.088, '3W': 0.08, '5i': 0.06, '7i': 0.052, '9i': 0.047, PW: 0.045, SW: 0.042};
+  const LAND = {green: 0.4, fringe: 0.5, fairway: 1, tee: 1, rough: 0.3, ob: 0.6};
   // part shots (chips and pitches) run out more for their length than full swings do
-  const CHIP = {Dr: 0.1, '3W': 0.15, '5i': 0.2, '7i': 0.25, '9i': 0.3, PW: 0.3, SW: 0.35}, cfr = Math.min(1, carry / C.max);
-  const rollFrac = C.roll + (CHIP[s.club] || 0.2) * (1 - cfr) * (1 - cfr);
-  const runRef = (hitTree ? 0.5 : leaves ? 1.5 + Math.random() * 2 : carry * rollFrac * RUN) * (top > 0 ? 1 + 1.0 * top : 1) * (1 + along * 0.01);
-  const lie0 = course.lie(land[0], land[1]);
-  const v1 = Math.sqrt(2 * SURF.fairway.mu * G * Math.max(0.05, runRef)) * (LAND[lie0] || 1);
-  const vRoll = v1 / (surf(lie0).keep || 0.6);
-  const vh = Math.hypot(vxL, vyL) || 1, k = vRoll / vh;
-  const st = {x: land[0], y: land[1], vx: vxL * k, vy: vyL * k, t: 0};
-  const vzIn = Math.min(16, Math.max(2.5, Math.abs(vzL) * 0.65));
+  const CHIP = {Dr: 0.08, '3W': 0.12, '5i': 0.16, '7i': 0.2, '9i': 0.24, PW: 0.24, SW: 0.28}, cfr = Math.min(1, carry / C.max);
+  const rollFrac = (RO[s.club] || 0.05) + (CHIP[s.club] || 0.16) * (1 - cfr) * (1 - cfr);
+  const lie0 = course.lie(land[0], land[1]), S0 = surf(lie0);
   // backspin: wedges zip it back on a green; longer clubs barely check
   const SPINK = {Dr: 0.4, '3W': 0.5, '5i': 0.7, '7i': 0.9, '9i': 1.15, PW: 1.35, SW: 1.6};
-  const tEff = top * (SPINK[s.club] || 1), cf = Math.min(1, carry / C.max);
-  const zip = tEff < -0.25 ? 1.7 * Math.min(1.25, -tEff - 0.25) * Math.pow(cf, 0.7) : 0;
+  const tEff = hitTree ? 0 : top * (SPINK[s.club] || 1), cf = Math.min(1, carry / C.max);
+  const zip = tEff < -0.25 && (lie0 === 'green' || lie0 === 'fringe') ? 1.7 * Math.min(1.25, -tEff - 0.25) * Math.pow(cf, 0.7) : 0;
+  let runRef = (hitTree ? 0.5 : leaves ? 1.5 + Math.random() * 2 : carry * rollFrac) * (top > 0 ? 1 + 1.0 * top : 1) * (1 + along * 0.01) * (LAND[lie0] ?? 1);
+  if (tEff < 0 && !zip) runRef *= Math.max(0.15, 1 + 0.6 * tEff);      // backspin on grass: it checks up
+  const down = Math.min(30, Math.max(1.5, Math.abs(vzL)));
+  let up = down * (S0.e1 || 0) * (zip ? 0.6 : 1);
+  const vh = Math.hypot(vxL, vyL) || 1;
+  // the pace it should leave the first bounce with (backwards, if the wedge zips it)
+  const u = zip ? -zip : speedForRun(S0, up, Math.max(0.05, runRef));
+  const st = {x: land[0], y: land[1], vx: vxL, vy: vyL, t: 0};
   const rollTrack = [[land[0], land[1], 0, 0]];
-  let lie = course.lie(land[0], land[1]), holed = false, lip = null;
+  let lie = lie0, holed = false, lip = null;
   if (!STOP(lie)){
-    if (s.pin && Math.hypot(land[0] - s.pin[0], land[1] - s.pin[1]) < CUP){ st.z = 0; st.vz = vzIn; lie = 'green'; }   // straight in the hole
-    else lie = bounce(course, st, vzIn, {track: rollTrack, spin: hitTree ? 0 : tEff, zip, pin: s.pin});
+    if (s.pin && Math.hypot(land[0] - s.pin[0], land[1] - s.pin[1]) < CUP){ st.vx = vxL / vh * u; st.vy = vyL / vh * u; st.z = 0; st.vz = Math.min(16, down * 0.65); lie = 'green'; }   // straight in the hole
+    else {
+      if (zip){ st.vx = vxL / vh * u; st.vy = vyL / vh * u; }
+      else up = contact(course, st, down, S0.e1, u / vh);
+      lie = bounce(course, st, up, {track: rollTrack, pin: s.pin});
+    }
     if (!STOP(lie)){
-      const r = roll(course, st, {track: rollTrack, pin: s.pin, field: s.field, drag: 0.45});
+      const r = roll(course, st, {track: rollTrack, pin: s.pin, field: s.field});
       lie = r.lie; holed = r.holed; lip = st.lip || null;
     }
   }

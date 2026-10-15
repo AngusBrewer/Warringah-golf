@@ -4,6 +4,7 @@
 'use strict';
 const {centroid, rng} = window.GolfGeo;
 const W = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+const AIM_DOTS = window.AIM_DOTS = 5;   // dots on the aim line out to the landing ring (shown on the ground and on the mini map)
 // treat every colour we write as sRGB (as designed), so vertex-coloured trees and greens aren't washed out
 THREE.ColorManagement.legacyMode = false;
 
@@ -254,8 +255,11 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
   }
   buildAim(){
     this.aimDots = new THREE.Group(); this.scene.add(this.aimDots);
-    const dotGeo = new THREE.CircleGeometry(0.5, 12).rotateX(-Math.PI/2), mat = new THREE.MeshBasicMaterial({color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false});
-    for (let i = 0; i < 40; i++){ const dm = new THREE.Mesh(dotGeo, mat); dm.position.y = 0.05; this.aimDots.add(dm); }
+    const dotGeo = new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI/2), edgeGeo = new THREE.CircleGeometry(0.66, 16).rotateX(-Math.PI/2);
+    const mat = new THREE.MeshBasicMaterial({color: '#ffffff', transparent: true, opacity: 0.92, depthWrite: false});
+    const edge = new THREE.MeshBasicMaterial({color: '#1a2a12', transparent: true, opacity: 0.55, depthWrite: false});
+    for (let i = 0; i < 40; i++){ const dg = new THREE.Group(), e = new THREE.Mesh(edgeGeo, edge), dm = new THREE.Mesh(dotGeo, mat);
+      e.renderOrder = 2; dm.renderOrder = 3; dm.position.y = 0.01; dg.add(e, dm); dg.edge = e; this.aimDots.add(dg); }
     this.ring = new THREE.Mesh(new THREE.RingGeometry(3.4, 4.2, 40).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color: '#ffe066', transparent: true, opacity: 0.9, depthWrite: false}));
     this.ring.position.y = 0.06; this.scene.add(this.ring);
   }
@@ -381,12 +385,18 @@ float wn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f); return m
     if (this.readCup) this.readCup.visible = !!on;
     const r = this.reads[i]; if (on && r && !r.material.map){ r.material.map = GolfGreens.readTexture(this.fields[i], r.userData.size, r.userData.origin); r.material.needsUpdate = true; }
   }
+  // Aim guide. Full shots (v18): AIM_DOTS big dots evenly spaced out to the landing ring, the same
+  // dots the mini map shows, so you can line a dot up with a gap or a bunker on the map (as in Wii golf).
+  // Putts keep a fine line of small dots.
   showAim(from, ang, dist, putt){
     const vis = dist > 0; this.aimDots.visible = vis; this.ring.visible = vis; if (!vis) return;
-    const n = this.aimDots.children.length, ux = Math.cos(ang), uy = Math.sin(ang);
-    const step = Math.max(0.6, dist / n);
-    this.aimDots.children.forEach((m, i) => { const s = step * (i + 1); const x = from[0] + ux*s, y = from[1] + uy*s; m.visible = s < dist && s > (putt ? 0.3 : 3); m.position.copy(W(x, y, this.ground(x, y) + 0.03)); m.scale.setScalar(putt ? 0.06 : Math.min(1.6, 0.08 + s/90)); });
-    const ex = from[0] + ux*dist, ey = from[1] + uy*dist; this.ring.position.copy(W(ex, ey, this.ground(ex, ey) + 0.04)); this.ring.scale.setScalar(putt ? 0.05 : Math.max(0.4, dist / 110));
+    const n = putt ? this.aimDots.children.length : AIM_DOTS, ux = Math.cos(ang), uy = Math.sin(ang);
+    const step = putt ? Math.max(0.6, dist / n) : dist / (AIM_DOTS + 1);
+    this.aimDots.children.forEach((m, i) => { const s = step * (i + 1); const x = from[0] + ux*s, y = from[1] + uy*s;
+      m.visible = i < n && s < dist - 0.01 && s > (putt ? 0.3 : 3); if (!m.visible) return;
+      m.position.copy(W(x, y, this.ground(x, y) + (putt ? 0.03 : 0.12))); m.edge.visible = !putt;
+      m.scale.setScalar(putt ? 0.06 : Math.min(5, 0.9 + s / 40)); });
+    const ex = from[0] + ux*dist, ey = from[1] + uy*dist; this.ring.position.copy(W(ex, ey, this.ground(ex, ey) + 0.06)); this.ring.scale.setScalar(putt ? 0.05 : Math.max(0.4, dist / 110));
   }
 
   // ---------- camera ----------

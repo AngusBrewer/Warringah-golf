@@ -113,4 +113,27 @@ const lr = shot(leafy, {club: '7i'});
 check('leaves slow the ball rather than stop it', lr.events.includes('leaves') || lr.events.includes('tree'));
 check('a ball never ends up behind where it started', avg(20, () => shot(leafy, {club: '7i'}).rest[0]) > 30);
 
+console.log('Bounces and roll (version 18)');
+const peak = r => Math.max(...r.rollTrack.map(p => p[2]));
+const hopDr = peak(shot(flat, {club: 'Dr'}));
+check('a drive kicks up 2.5-3.5 m off the fairway', hopDr > 2.4 && hopDr < 3.6, `${hopDr.toFixed(2)} m`);
+const hopG = peak(shot(onGreen, {club: '7i'}));
+check('a 7 iron hops under about a metre on a green', hopG > 0.5 && hopG < 1.3, `${hopG.toFixed(2)} m`);
+const hopR = peak(shot(flatRough, {club: '7i'}));
+check('the rough takes the bounce out, but not all of it', hopR > 0.4 && hopR < hopG + 0.2, `${hopR.toFixed(2)} m`);
+const runDr = shot(flat, {club: 'Dr'});
+check('a drive runs out about 20 m on a flat fairway', Math.abs(runDr.total - runDr.carry - 20) < 3, `${(runDr.total - runDr.carry).toFixed(1)} m`);
+const r7 = shot(flat, {club: '7i'});
+check('a 7 iron runs out 6-10 m on a fairway', r7.total - r7.carry > 6 && r7.total - r7.carry < 10, `${(r7.total - r7.carry).toFixed(1)} m`);
+{ // the roll after the last hop slows at a steady rate (no hard braking, then creeping)
+  const tr = runDr.rollTrack, i0 = tr.findIndex((p, i) => i > 5 && p[2] === 0 && tr.slice(i).every(q => q[2] === 0));
+  const R = tr.slice(i0), sp = [];
+  for (let i = 1; i < R.length; i++) if (R[i][3] > R[i - 1][3]) sp.push([R[i][3], (R[i][0] - R[i - 1][0]) / (R[i][3] - R[i - 1][3])]);
+  const a = (sp[0][1] - sp[Math.floor(sp.length / 2)][1]) / (sp[Math.floor(sp.length / 2)][0] - sp[0][0]), b = sp[Math.floor(sp.length / 2)][1] / (sp.at(-1)[0] - sp[Math.floor(sp.length / 2)][0]);
+  check('the roll slows evenly to a stop', a / b > 0.7 && a / b < 1.4, `${a.toFixed(2)} vs ${b.toFixed(2)} m/s²`);
+}
+const downhill = flatCourse({lie: () => 'fairway', slope: [-0.12, 0]}), uphill = flatCourse({lie: () => 'fairway', slope: [0.12, 0]});
+const rd = avg(4, () => { const r = shot(downhill, {club: '7i'}); return r.total - r.carry; }), ru = avg(4, () => { const r = shot(uphill, {club: '7i'}); return r.total - r.carry; });
+check('landing on a downslope kicks on; into a bank it stops', rd > r7.total - r7.carry + 2 && ru < r7.total - r7.carry - 2, `down ${rd.toFixed(1)} m, up ${ru.toFixed(1)} m`);
+
 done();
